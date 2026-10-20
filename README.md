@@ -17,10 +17,10 @@ Run commands from the repository root. `npm run build` produces a static site in
 
 1. Set width, length, eave height, roof shape, and rise per 12. Choose 2–6 post positions in each direction, either as an evenly spaced count or explicit coordinates. Columns occur at the Cartesian grid intersections (4–36 posts). A centered gable ridge is added as a roof line when needed, without adding posts.
 2. Enter dead and unreduced roof live loads on horizontal projected area. Include **all permanent weight**, including the framing and columns, in the equivalent dead-load input. Member self-weight is not added automatically.
-3. Import an ASCE hazards PDF or enter hazard values. The supplied report contains Vult = 93 mph, SDS = 0.81 g, SD1 = 0.51 g, SS = 0.88 g, S1 = 0.29 g, TL = 8 s, risk II, SDC D, and Default soil class. Review site class and spectrum applicability. The PDF parser extracts recognized numeric data only; uploaded content does not execute instructions. Processing stays in the browser.
+3. Import an ASCE hazards PDF or enter hazard values. The supplied report contains Vult = 93 mph, SDS = 0.81 g, SD1 = 0.51 g, SS = 0.88 g, S1 = 0.29 g, TL = 8 s, risk II, SDC D, and Default soil class. Review site class and spectrum applicability. PDF import extracts recognized hazard values and the address from the first-page address column. A recognized address replaces the project site address; an absent/unreadable address preserves it. Extraction excludes adjacent code, risk-category, latitude, and longitude columns. The parser reads data only; uploaded content does not execute instructions. Processing stays in the browser.
 4. Supply wind exposure factors, reference areas, net MWFRS and C&C coefficients, and references. Coefficients are **illustrative until replaced and reviewed**. Kz is entered explicitly; choosing the exposure label does not compute it. Horizontal reference areas stay fixed when dimensions change and must be reviewed. Net coefficients include gust effects. No internal-pressure term for an enclosed building is inferred for this freestanding roof.
 5. For the default Chapter 15 **structure-similar-to-buildings** branch, provide T, the **design spectrum ordinate Sa(T)** at that period, Ie, and other seismic factors. R remains 1.5. The app computes `Cs = max(Sa(T) Ie/R, 0.044 SDS Ie, 0.01, 0.5 S1 Ie/R when S1 >= 0.6)` and `V = Cs W`. Confirm the branch's applicability under Chapter 15. Sa(T) is not inferred from SDS/SD1 or digitized from the PDF chart. Its default is illustrative. For another Chapter 15 procedure, enter an engineer-established Cs including the applicable minima. Vertical Ev/D is a separate input and does not track changes in SDS automatically.
-6. Review basic, unfactored study, ASD, and LRFD reactions. Independent component envelopes retain their governing cases; their extrema must not be combined into a simultaneous force set. Export all concurrent reactions to CSV, the complete calculation report to printable HTML, or the project inputs to JSON.
+6. Review basic, unfactored study, ASD, and LRFD reactions. Seismic design cases automatically include the eight signed 100%/30% orthogonal patterns of ASCE 7-22 §12.5.1.2(a). Governing demand combinations are highlighted in gold, including ties; the governing-only filter hides other combinations. Clicking a governing demand opens its concurrent post/case reactions. Independent component envelopes retain their governing cases; their extrema must not be combined into a simultaneous force set. Export all concurrent reactions to CSV, the complete calculation report to printable HTML, or the project inputs to JSON.
 
 ## Hand-calculation method and signs
 
@@ -43,11 +43,28 @@ The **Hand calculations** tab is the primary result: numbered calculation sectio
 
 The printable HTML export includes project assumptions, every post's tributary dimensions, worked wind/seismic arithmetic, C&C pressures, common-base envelopes, all concurrent reactions, and complete source inputs. JSON and CSV exports are also available.
 
+## Orthogonal seismic effects and governing combinations
+
+ASCE 7-22 §12.5.1.2(a), as provided in the project reference excerpt, requires simultaneous directional effects with 100% along one direction plus 30% along the perpendicular direction. The app generates all eight sign/primary-axis patterns:
+
+```text
++EX + 0.30EY    +EX - 0.30EY    -EX + 0.30EY    -EX - 0.30EY
++0.30EX + EY    +0.30EX - EY    -0.30EX + EY    -0.30EX - EY
+```
+
+Signed EX/EY basic cases provide the effects for each component. Linear addition gives simultaneous Vx, Vy, Mx, and My. Both horizontal terms receive rho in LRFD and 0.7 rho in ASD. Ev is added/subtracted as a factor of D **once** per full combination. The default model now has 123 cases: 22 basic/reference cases, 17 service studies, 42 ASD cases, and 42 LRFD cases. Single-axis cases remain basic references; seismic design combinations use the orthogonal patterns. Older version 1 project files automatically recalculate with this rule; no option disables it. For the ASCE 7-16 metadata selection, this is identified as a project directional assumption requiring edition-specific applicability review, rather than citing the 7-22 section as a 7-16 provision.
+
+The hand sheet includes a new §12.5.1.2(a) arithmetic section with all eight directional effects at the selected post. The software calculates demands; member/foundation strength, interaction, and drift acceptance checks are not established by this feature.
+
+Gold labels identify maximum compression, uplift, resultant shear, and resultant bending across all posts **within each load basis**. Ties use unrounded demand values with tolerance `1e-7 + 1e-9 × |maximum|` in lb or lb-ft. Zero-demand criteria are not labeled governing. Summary cards open a representative concurrent set, and all tied cases are highlighted in the combination list and selection controls. The reaction table highlights only the matching governing post(s); other posts are not labeled just because the case governs somewhere. HTML exports retain text labels/highlights, and CSV adds a `Governing_demand_criteria` column for each post/case. These are demand maxima, not utilization checks; another case can govern a capacity interaction.
+
+Automatic wind table lookup is **not implemented**: it requires a verified source table/figure and its applicability limits. The supplied hazards PDF provides wind speed, not canopy GCn or exposed-frame GCf coefficients. Net roof coefficients must remain separate from horizontal reference drag. Current entries stay manual and carry their review/source notes.
+
 ## Scope
 
 This is an engineering review tool, not automatic CBC/ASCE compliance certification. The user-specified R is recorded rather than verified against a material/system table. Code selection does not automatically supply aerodynamic tables, spectrum ordinates, period limits, system eligibility, or jurisdictional amendments.
 
-The Chapter 2 combination set is reduced to D, Lr, W, and E. Service cases are explicitly unfactored diagnostic studies; ASD applies 0.6 to ultimate wind. Snow, rain/ponding, ice, floor live load, thermal actions, equipment, and other applicable loads need separate treatment. This version does not implement orthogonal seismic effects, accidental torsion, overstrength/anchorage combinations, capacity design, uplift-dependent support behavior, roof-load eccentric transfer moments, P–Delta, member strength, connection/anchor design, foundations, soil flexibility, or roof diaphragm design. Automatic Kz/coefficient lookup, automatic period estimation, and numeric multi-period spectrum retrieval are not implemented.
+The Chapter 2 combination set is reduced to D, Lr, W, and E. Service cases are explicitly unfactored diagnostic studies; ASD applies 0.6 to ultimate wind. Snow, rain/ponding, ice, floor live load, thermal actions, equipment, and other applicable loads need separate treatment. This version implements the 100%/30% directional force-effect combinations, but does not implement accidental torsion, overstrength/anchorage combinations, capacity design, uplift-dependent support behavior, roof-load eccentric transfer moments, P–Delta, member strength, connection/anchor design, foundations, soil flexibility, or roof diaphragm design. Automatic Kz/coefficient lookup, automatic period estimation, and numeric multi-period spectrum retrieval are not implemented.
 
 ## Validation
 

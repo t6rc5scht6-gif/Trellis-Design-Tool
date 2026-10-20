@@ -86,19 +86,42 @@ export function seismicCoefficient(s) {
   return {cs:Math.max(raw,minimum),raw,minimum,governing:raw>=minimum?'Sa(T) Ie / R':'Chapter 12 ELF minimum'};
 }
 export const WIND_CASES=['WX+','WX+↓','WX−','WX−↓','WY+','WY+↓','WY−','WY−↓'];
+export const DEMAND_LABELS={compression:'Compression',uplift:'Uplift',shear:'Shear',moment:'Moment'};
+export const directionalReference=p=>p.code.includes('7-22')?'ASCE 7-22 §12.5.1.2(a)':'100/30 project assumption · verify ASCE 7-16 applicability';
+export function orthogonalSeismicPatterns(){
+  const patterns=[];
+  for(const primary of ['X','Y'])for(const sx of ['+','−'])for(const sy of ['+','−']){
+    const x=primary==='X'?1:0.3,y=primary==='Y'?1:0.3;
+    const name=primary==='X'?`EX${sx} + 0.3EY${sy}`:`0.3EX${sx} + EY${sy}`;
+    patterns.push({name,factors:{[`EX${sx}`]:x,[`EY${sy}`]:y},primary,signX:sx,signY:sy});
+  }
+  return patterns;
+}
 export function combinations(p) {
   const a=[{name:'D',family:'Basic',factors:{D:1}},{name:'Lr',family:'Basic',factors:{Lr:1}}];
-  const winds=WIND_CASES,earthquakes=['EX+','EX−','EY+','EY−'];
-  for(const w of winds)a.push({name:w,family:'Basic',factors:{[w]:1}});for(const e of earthquakes)a.push({name:e,family:'Basic',factors:{[e]:1}});
-  const add=(family,name,factors)=>a.push({family,name,factors});
-  add('Service','D + Lr',{D:1,Lr:1});winds.forEach(w=>add('Service',`D + ${w}`,{D:1,[w]:1}));earthquakes.forEach(e=>add('Service',`D + ${e}`,{D:1,[e]:1}));
+  const winds=WIND_CASES,axes=['EX+','EX−','EY+','EY−'],patterns=orthogonalSeismicPatterns();
+  for(const w of winds)a.push({name:w,family:'Basic',factors:{[w]:1}});
+  // Keep single-axis cases as basic references. Design E cases use all eight 100/30 patterns.
+  for(const e of axes)a.push({name:e,family:'Basic',factors:{[e]:1}});
+  const add=(family,name,factors,pattern)=>a.push({family,name,factors,...(pattern?{directional:pattern}: {})});
+  const seismicFactors=(pattern,factor)=>Object.fromEntries(Object.entries(pattern.factors).map(([key,value])=>[key,value*factor]));
+  for(const pattern of patterns)add('Basic',pattern.name,{...pattern.factors},pattern);
+  add('Service','D + Lr',{D:1,Lr:1});
+  winds.forEach(w=>add('Service',`D + ${w}`,{D:1,[w]:1}));
+  for(const pattern of patterns)add('Service',`D + (${pattern.name})`,{D:1,...pattern.factors},pattern);
   add('LRFD','1.4D',{D:1.4});add('LRFD','1.2D + 1.6Lr',{D:1.2,Lr:1.6});
-  for(const w of winds){add('LRFD',`1.2D + 1.6Lr + 0.5${w}`,{D:1.2,Lr:1.6,[w]:0.5});add('LRFD',`1.2D + ${w} + 0.5Lr`,{D:1.2,Lr:0.5,[w]:1});add('LRFD',`0.9D + ${w}`,{D:.9,[w]:1});}
+  for(const w of winds){add('LRFD',`1.2D + 1.6Lr + 0.5${w}`,{D:1.2,Lr:1.6,[w]:0.5});add('LRFD',`1.2D + ${w} + 0.5Lr`,{D:1.2,Lr:.5,[w]:1});add('LRFD',`0.9D + ${w}`,{D:.9,[w]:1});}
   const ev=p.seismic.verticalFactor,rho=p.seismic.rho;
-  for(const e of earthquakes){add('LRFD',`1.2D + Ev + ρ${e}`,{D:1.2+ev,[e]:rho});add('LRFD',`0.9D − Ev + ρ${e}`,{D:.9-ev,[e]:rho});}
+  for(const pattern of patterns){
+    add('LRFD',`1.2D + Ev + ρ(${pattern.name})`,{D:1.2+ev,...seismicFactors(pattern,rho)},pattern);
+    add('LRFD',`0.9D − Ev + ρ(${pattern.name})`,{D:.9-ev,...seismicFactors(pattern,rho)},pattern);
+  }
   add('ASD','D',{D:1});add('ASD','D + Lr',{D:1,Lr:1});
   for(const w of winds){add('ASD',`D + 0.6${w}`,{D:1,[w]:.6});add('ASD',`D + 0.75Lr + 0.45${w}`,{D:1,Lr:.75,[w]:.45});add('ASD',`0.6D + 0.6${w}`,{D:.6,[w]:.6});}
-  for(const e of earthquakes){add('ASD',`D + 0.7Ev + 0.7ρ${e}`,{D:1+.7*ev,[e]:.7*rho});add('ASD',`0.6D − 0.7Ev + 0.7ρ${e}`,{D:.6-.7*ev,[e]:.7*rho});}
+  for(const pattern of patterns){
+    add('ASD',`D + 0.7Ev + 0.7ρ(${pattern.name})`,{D:1+.7*ev,...seismicFactors(pattern,.7*rho)},pattern);
+    add('ASD',`0.6D − 0.7Ev + 0.7ρ(${pattern.name})`,{D:.6-.7*ev,...seismicFactors(pattern,.7*rho)},pattern);
+  }
   return a;
 }
 // Sum net pressure over the two halves of a post's tributary rectangle.
@@ -146,10 +169,28 @@ export function envelope(result,family) {
     for(const c of cases){const value=c.reactions[i][j];if(value<min.value)min={value,case:c.name};if(value>max.value)max={value,case:c.name};}return {min,max};
   })}));
 }
+const demandValues=row=>({compression:Math.max(0,-row[2]),uplift:Math.max(0,row[2]),shear:Math.hypot(row[0],row[1]),moment:Math.hypot(row[3],row[4])});
+// Use unrounded values for ties. The tolerance is in lb or lb-ft, not displayed kip precision.
+const demandTie=(value,max)=>Math.abs(value-max)<=1e-7+1e-9*Math.abs(max);
 export function governingBases(result,family){
-  const all=result.cases.filter(c=>c.family===family).flatMap(c=>c.reactions.map((row,i)=>({post:result.model.posts[i].name,case:c.name,reactions:row,
-    compression:Math.max(0,-row[2]),uplift:Math.max(0,row[2]),shear:Math.hypot(row[0],row[1]),moment:Math.hypot(row[3],row[4])})));
-  return ['compression','uplift','shear','moment'].map(key=>({key,...all.reduce((a,b)=>b[key]>a[key]?b:a)}));
+  const all=result.cases.filter(c=>c.family===family).flatMap(c=>c.reactions.map((row,i)=>({post:result.model.posts[i].name,case:c.name,reactions:row,...demandValues(row)})));
+  if(!all.length)return [];
+  return Object.keys(DEMAND_LABELS).map(key=>{
+    const winner=all.reduce((a,b)=>b[key]>a[key]?b:a),active=winner[key]>1e-7;
+    return {key,...winner,active,ties:active?all.filter(row=>demandTie(row[key],winner[key])):[]};
+  });
+}
+export function governingCaseMap(result,family){
+  const map={};
+  for(const criterion of governingBases(result,family))for(const tie of criterion.ties){
+    const entry=map[tie.case]||={metrics:[],posts:{}};
+    if(!entry.metrics.includes(criterion.key))entry.metrics.push(criterion.key);
+    (entry.posts[criterion.key]||=[]).push(tie.post);
+  }
+  return map;
+}
+export function governingPostMetrics(caseInfo,post){
+  return caseInfo?caseInfo.metrics.filter(key=>caseInfo.posts[key].includes(post)):[];
 }
 export function warnings(p){return [
   ...(!p.wind.reviewed?['Wind coefficients and reference areas are illustrative and require project-specific code selection.']:[]),
@@ -158,6 +199,7 @@ export function warnings(p){return [
   ...(p.code.includes('7-16')&&p.hazard?.source?.includes('7-22')?['The ASCE 7-22 hazard report does not match the selected ASCE 7-16 edition.']:[]),
   `Independent cantilever posts; roof gravity and roof-normal wind loads use geometric tributary areas. Horizontal reference wind and seismic shear use ${p.distribution==='equal'?'equal load per post':'tributary area fractions'}. This is an assigned load path, not a stiffness redistribution or a universal conservative bound.`,
   ...(p.wind.uniformRoof?['For each direction and sign, apply the governing net roof coefficient uniformly. This envelopes the entered local pressures but does not replace checking all required code wind patterns.']:[]),
-  'Roof-load eccentric moments, diaphragm torsion, accidental torsion, orthogonal seismic effects, P–Δ, overstrength/anchorage, and member/connection/foundation capacity are outside this hand-calculation scope.',
+  'Roof-load eccentric moments, diaphragm torsion, accidental torsion, P–Δ, overstrength/anchorage, and member/connection/foundation capacity are outside this hand-calculation scope.',
+  'Seismic design combinations include all eight signed 100%/30% orthogonal patterns. This implements directional force effects; member/foundation strength and drift acceptance checks remain outside the app.',
   'Only D, unreduced roof live Lr, W, and E are combined. Check snow, rain/ponding, ice, thermal, and other applicable loads separately.'
 ];}

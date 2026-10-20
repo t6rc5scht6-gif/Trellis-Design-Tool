@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {analyze,cloneDefault,coordinates,geometry,seismicCoefficient,velocityPressure,envelope,validate,governingBases} from '../src/engine.js';
-import {parseHazardText,applyHazards} from '../src/hazards.js';
+import {analyze,cloneDefault,coordinates,geometry,seismicCoefficient,velocityPressure,envelope,validate,governingBases,governingCaseMap,governingPostMetrics,orthogonalSeismicPatterns} from '../src/engine.js';
+import {parseHazardText,applyHazards,parseHazardAddress,addressFromPdfItems} from '../src/hazards.js';
 import {reactionCsv,reportHtml} from '../src/report.js';
 const close=(a,b,tol=1e-8)=>assert.ok(Math.abs(a-b)<=tol*Math.max(1,Math.abs(b)),`${a} != ${b}`);
 const sum=(a,j)=>a.reduce((s,x)=>s+x[j],0);
@@ -64,10 +64,10 @@ test('LRFD and ASD reaction arithmetic includes wind factors, seismic Ev, and up
   const p=flat();p.wind.roofX1=2;p.wind.roofX2=2;const r=analyze(p),c=r.cases.find(c=>c.family==='LRFD'&&c.name==='0.9D + WX+');
   c.reactions.forEach((a,i)=>a.forEach((v,j)=>close(v,.9*r.basic.D.reactions[i][j]+r.basic['WX+'].reactions[i][j])));assert.ok(c.reactions.every(v=>v[2]>0));
   const a=r.cases.find(c=>c.family==='ASD'&&c.name==='D + 0.6WX+');close(sum(a.reactions,0),.6*r.basic['WX+'].totalLoad[0]);
-  const e=r.cases.find(c=>c.family==='LRFD'&&c.name==='0.9D − Ev + ρEX+');close(sum(e.reactions,2),-(.9-p.seismic.verticalFactor)*p.dead*480);
+  const e=r.cases.find(c=>c.family==='LRFD'&&c.name==='0.9D − Ev + ρ(EX+ + 0.3EY+)');close(sum(e.reactions,2),-(.9-p.seismic.verticalFactor)*p.dead*480);
 });
 test('both uplift and downward wind actions appear in required wind combinations',()=>{
-  const r=analyze(flat());assert.equal(Object.keys(r.windForces).length,8);assert.equal(r.cases.length,95);
+  const r=analyze(flat());assert.equal(Object.keys(r.windForces).length,8);assert.equal(r.cases.length,123);
   assert.ok(r.cases.some(c=>c.family==='LRFD'&&c.name==='1.2D + WX+↓ + 0.5Lr'));
 });
 test('ELF coefficient applies minima and R always stays 1.5',()=>{
@@ -109,4 +109,74 @@ test('hand-calculation exports include substituted arithmetic, code references, 
 });
 test('largest grid retains tributary area and load accounting',()=>{
   const p=flat();p.xPosts='0, 4, 8, 12, 16, 20';p.yPosts='0, 4, 8, 12, 18, 24';const r=analyze(p);assert.equal(r.model.posts.length,36);assert.ok(r.forceAccountingError<1e-8);
+});
+
+test('100/30 patterns include both primary axes and every independent sign pair',()=>{
+  const patterns=orthogonalSeismicPatterns();assert.equal(patterns.length,8);
+  const r=analyze(flat());
+  for(const primary of ['X','Y']){
+    const selected=patterns.filter(p=>p.primary===primary);assert.equal(selected.length,4);
+    assert.equal(new Set(selected.map(p=>p.signX+p.signY)).size,4);
+    for(const p of selected){
+      const c=r.cases.find(c=>c.family==='Basic'&&c.name===p.name),v=c.reactions[0],F=r.baseShear/4;
+      close(v[0],(p.signX==='+'?1:-1)*(primary==='X'?1:.3)*F);
+      close(v[1],(p.signY==='+'?1:-1)*(primary==='Y'?1:.3)*F);
+      close(v[3],-v[1]*10);close(v[4],v[0]*10);close(v[2],0);
+    }
+  }
+  for(const family of ['ASD','LRFD'])assert.equal(r.cases.filter(c=>c.family===family&&c.directional).length,16);
+  assert.equal(r.cases.filter(c=>c.family==='Service'&&c.directional).length,8);
+});
+test('orthogonal LRFD/ASD apply rho to both horizontal terms and Ev only once',()=>{
+  const p=flat();p.seismic.rho=1.3;p.seismic.verticalFactor=.17;const r=analyze(p),F=r.baseShear/4,D=12*120;
+  for(const family of ['LRFD','ASD'])for(const c of r.cases.filter(c=>c.family===family&&c.directional)){
+    const scale=family==='LRFD'?1:.7,primary=c.directional.primary,sx=c.directional.signX==='+'?1:-1,sy=c.directional.signY==='+'?1:-1;
+    const low=c.name.startsWith(family==='LRFD'?'0.9D':'0.6D');
+    const dFactor=family==='LRFD'?(low?.9-.17:1.2+.17):(low?.6-.7*.17:1+.7*.17);
+    close(c.reactions[0][0],sx*F*(primary==='X'?1:.3)*1.3*scale);
+    close(c.reactions[0][1],sy*F*(primary==='Y'?1:.3)*1.3*scale);
+    close(c.reactions[0][2],-D*dFactor);
+    close(c.factors.D,dFactor);
+  }
+});
+test('orthogonal loading produces biaxial demand and increases symmetric resultant by sqrt(1.09)',()=>{
+  const r=analyze(flat()),c=r.cases.find(c=>c.family==='Basic'&&c.name==='EX+ + 0.3EY+');
+  const v=c.reactions[0];close(Math.hypot(v[0],v[1]),r.baseShear/4*Math.sqrt(1.09));close(Math.hypot(v[3],v[4]),r.baseShear/4*10*Math.sqrt(1.09));
+  assert.ok(v[3]<0&&v[4]>0);
+});
+test('all numerical governing ties are marked with their actual posts and criteria',()=>{
+  const r=analyze(cloneDefault()),map=governingCaseMap(r,'LRFD'),g=governingBases(r,'LRFD');
+  const moment=g.find(g=>g.key==='moment');assert.equal(moment.ties.length,16);
+  for(const tie of moment.ties){assert.ok(map[tie.case].metrics.includes('moment'));assert.ok(governingPostMetrics(map[tie.case],tie.post).includes('moment'));}
+  assert.deepEqual(governingPostMetrics(map[moment.case],'P01'),[]);
+  assert.equal(map['1.4D'],undefined);
+});
+test('zero demand is not governing and display rounding does not create false ties',()=>{
+  const result={model:{posts:[{name:'P01'}]},cases:[{family:'LRFD',name:'zero',reactions:[[0,0,0,0,0,0]]}]};
+  assert.deepEqual(governingCaseMap(result,'LRFD'),{});
+  result.cases.push({family:'LRFD',name:'max',reactions:[[1000,0,0,0,0,0]]},{family:'LRFD',name:'near',reactions:[[999.9,0,0,0,0,0]]});
+  const map=governingCaseMap(result,'LRFD');assert.deepEqual(map.max.metrics,['shear']);assert.equal(map.near,undefined);assert.equal(map.zero,undefined);
+});
+test('text address extraction excludes adjacent report columns and combines city/ZIP',()=>{
+  const text='ASCE Hazards Report\nAddress:    Standard: ASCE/SEI 7-22     Latitude: 38.5\n28193 Mace Blvd    Risk Category: II Longitude: -121.6\nDavis, California\n95618\n    Soil Class: Default   Elevation: 36 ft\nWind\nResults:';
+  assert.equal(parseHazardAddress(text),'28193 Mace Blvd, Davis, California 95618');
+  assert.equal(parseHazardAddress('Address:\nNo address available\nStandard: ASCE/SEI 7-22'),undefined);
+  assert.equal(parseHazardAddress('Wind Speed 93 Vmph'),undefined);
+});
+test('PDF address extraction selects the address column using item coordinates',()=>{
+  const item=(str,x,y)=>({str,transform:[1,0,0,1,x,y]});
+  const items=[item('Address:',50,700),item('28193 Mace Blvd',50,688),item('Davis, California',50,676),item('95618',50,664),item('Standard:',190,700),item('ASCE/SEI 7-22',270,700),item('Risk Category:',190,688),item('II',270,688),item('Wind',50,560)];
+  assert.equal(addressFromPdfItems(items),'28193 Mace Blvd, Davis, California 95618');
+});
+test('hazard import updates a recognized address and preserves it when absent',()=>{
+  const p=cloneDefault();p.address='Existing manual address';
+  const parsed=parseHazardText('Wind Speed 93 Vmph');
+  assert.equal(applyHazards(p,parsed,'without.pdf').project.address,'Existing manual address');
+  parsed.address='123 Main St, Davis, CA 95618';const imported=applyHazards(p,parsed,'with.pdf');
+  assert.equal(imported.project.address,parsed.address);assert.ok(imported.fields.includes('address'));assert.equal(imported.project.hazard.address,parsed.address);
+});
+test('reports and CSV retain orthogonal factors and governing annotations',()=>{
+  const p=flat(),r=analyze(p),csv=reactionCsv(r),html=reportHtml(p,r);
+  assert.ok(csv.includes('Governing_demand_criteria'));assert.ok(csv.includes('shear; moment'));
+  assert.ok(html.includes('ASCE 7-22 §12.5.1.2(a)'));assert.ok(html.includes('GOVERNS SHEAR / MOMENT'));assert.ok(html.includes('class="governing-row"'));assert.ok(html.includes('EX+ + 0.3EY+'));
 });

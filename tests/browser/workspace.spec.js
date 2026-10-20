@@ -71,9 +71,14 @@ test('layout fits mobile screen and navigation remains usable',async({page})=>{
 test('imports the supplied ASCE hazard PDF in the browser',async({page})=>{
   test.skip(!report,'Set HAZARD_REPORT_PATH to run the real-report import test.');
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
-  await page.goto('/');await page.getByLabel('Upload ASCE hazards PDF').setInputFiles(path.resolve(report));
+  await page.goto('/');
+  await page.getByRole('button',{name:'Project & hazards 06'}).click();
+  await page.getByLabel('Site address',{exact:true}).fill('Temporary manual address');
+  await page.getByLabel('Upload ASCE hazards PDF').setInputFiles(path.resolve(report));
   await expect(page.getByRole('status')).toContainText('Imported speed, sds, sd1, ss, s1, tl',{timeout:30000});
   const p=JSON.parse(await page.evaluate(()=>localStorage.getItem('trellis-project-v1')));
+  expect(p.address).toBe('28193 Mace Blvd, Davis, California 95618');
+  await expect(page.getByLabel('Site address',{exact:true})).toHaveValue('28193 Mace Blvd, Davis, California 95618');
   expect(p.wind.speed).toBe(93);expect(p.seismic.sds).toBe(.81);expect(p.seismic.sd1).toBe(.51);expect(p.seismic.s1).toBe(.29);expect(p.seismic.tl).toBe(8);expect(p.seismic.r).toBe(1.5);
   expect(errors).toEqual([]);
 });
@@ -88,4 +93,33 @@ test('hand calculation sheet shows arithmetic, code references and common-base e
   await page.locator('.governing-cards button').last().click();
   await expect(page.getByLabel('Worked post')).toHaveValue('P05');
   await expect(page.locator('.calc-combo-name')).toContainText('LRFD');
+});
+
+test('governing combinations are emphasized and can filter/open concurrent post reactions',async({page})=>{
+  const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('/');
+  await expect(page.getByRole('region',{name:'LRFD governing combinations'})).toBeVisible();
+  await page.getByRole('button',{name:'Inspect governing moment',exact:true}).click();
+  await expect(page.getByLabel('Worked combination')).toHaveValue('1.2D + Ev + ρ(EX+ + 0.3EY+)');
+  await expect(page.getByLabel('Worked post')).toHaveValue('P05');
+  await expect(page.locator('.calc-combo-name')).toContainText('Governs shear · moment');
+  await expect(page.locator('.directional-table tbody tr')).toHaveCount(8);
+  await page.getByRole('tab',{name:'Post reactions',exact:true}).click();
+  await expect(page.locator('.table-caption .governing-badge')).toContainText('Governs shear · moment');
+  await expect(page.locator('tr.governing-row')).toHaveCount(1);
+  await page.getByRole('tab',{name:'Load combinations'}).click();
+  await expect(page.locator('.combo-chips .governing-combo')).not.toHaveCount(0);
+  await expect(page.getByRole('button',{name:'1.4D',exact:true})).toBeVisible();
+  await page.getByLabel('Show governing combinations only').check();
+  await expect(page.getByRole('button',{name:'1.4D',exact:true})).toHaveCount(0);
+  expect(await page.locator('.combo-chips button').count()).toBe(await page.locator('.combo-chips button.governing-combo').count());
+  await page.getByLabel('Show governing combinations only').uncheck();
+  await expect(page.getByRole('button',{name:'1.4D',exact:true})).toBeVisible();expect(errors).toEqual([]);
+});
+test('saved version 1 projects recalculate with all eight 100/30 design patterns',async({page})=>{
+  await page.goto('/');await page.getByRole('tab',{name:'Hand calculations',exact:true}).click();
+  await page.getByLabel('Load basis',{exact:true}).selectOption('Basic');
+  await page.getByLabel('Worked combination').selectOption('0.3EX− + EY+');
+  await expect(page.locator('.directional-table tbody tr.selected-row')).toHaveCount(1);
+  await expect(page.locator('.calc-combo-name')).toContainText('0.3EX− + EY+');
+  await page.getByRole('tab',{name:'Load combinations'}).click();await expect(page.getByText('No snow, rain, floor live load, or overstrength combinations.',{exact:false})).toBeVisible();
 });
