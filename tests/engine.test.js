@@ -6,8 +6,8 @@ import {reactionCsv,reportHtml} from '../src/report.js';
 const close=(a,b,tol=1e-8)=>assert.ok(Math.abs(a-b)<=tol*Math.max(1,Math.abs(b)),`${a} != ${b}`);
 const sum=(a,j)=>a.reduce((s,x)=>s+x[j],0);
 const flat=()=>{const p=cloneDefault();p.roof='flat';p.xPosts='0, 20';p.yPosts='0, 24';return p;};
-test('velocity pressure uses ultimate speed and all four factors',()=>{
-  close(velocityPressure({speed:100,kz:1,kzt:1,kd:1,ke:1}),25.6);close(analyze(cloneDefault()).q,15.9971904);
+test('ASCE 7-22 qh excludes Kd, which is applied once to design pressure',()=>{
+  close(velocityPressure({speed:100,kz:1,kzt:1,kd:1,ke:1}),25.6);close(analyze(cloneDefault()).q,18.820224);close(analyze(cloneDefault()).windPressure,15.9971904);
 });
 test('four-post hand check: shear = V/4 and moment = shear times height',()=>{
   const p=flat(),r=analyze(p),c=r.basic['EX+'],V=0.81/1.5*12*20*24;
@@ -37,17 +37,17 @@ test('gable ridge adds roof geometry without adding posts or changing tributary 
 });
 test('normal pressure resolves to p At vertically and minus p slope At horizontally',()=>{
   const p=flat();p.roof='mono';p.slope=3;p.wind.cfX=0;p.wind.roofX1=1;p.wind.roofX2=1;
-  const r=analyze(p),w=r.basic['WX+'];close(w.totalLoad[2],r.q*480);close(w.totalLoad[0],-.25*r.q*480);
-  w.reactions.forEach((v,i)=>{close(v[0],-.25*r.q*120);close(v[4],v[0]*r.model.posts[i].pos[2]);});
+  const r=analyze(p),w=r.basic['WX+'];close(w.totalLoad[2],r.windPressure*480);close(w.totalLoad[0],-.25*r.windPressure*480);
+  w.reactions.forEach((v,i)=>{close(v[0],-.25*r.windPressure*120);close(v[4],v[0]*r.model.posts[i].pos[2]);});
 });
 test('uniform governing pressure envelopes both halves for every roof shape',()=>{
   for(const roof of ['flat','mono','gable']){const p=flat();p.roof=roof;p.wind.roofX1=.3;p.wind.roofX2=1.5;p.wind.roofX1Down=-.2;p.wind.roofX2Down=-.8;
-    const r=analyze(p);close(r.basic['WX+'].totalLoad[2],r.q*1.5*480);close(r.basic['WX+↓'].totalLoad[2],-r.q*.8*480);}
+    const r=analyze(p);close(r.basic['WX+'].totalLoad[2],r.windPressure*1.5*480);close(r.basic['WX+↓'].totalLoad[2],-r.windPressure*.8*480);}
 });
 test('explicit half-roof pressures integrate separately and reverse X mirrors the pattern',()=>{
   const p=flat();p.wind.uniformRoof=false;p.wind.roofX1=.2;p.wind.roofX2=1.6;p.roof='gable';const r=analyze(p);
-  close(r.basic['WX+'].totalLoad[2],r.q*.9*480);close(r.basic['WX−'].totalLoad[2],r.q*.9*480);
-  close(r.basic['WX+'].reactions[0][2],r.q*.2*120);close(r.basic['WX−'].reactions[0][2],r.q*1.6*120);
+  close(r.basic['WX+'].totalLoad[2],r.windPressure*.9*480);close(r.basic['WX−'].totalLoad[2],r.windPressure*.9*480);
+  close(r.basic['WX+'].reactions[0][2],r.windPressure*.2*120);close(r.basic['WX−'].reactions[0][2],r.windPressure*1.6*120);
 });
 test('equal lateral distribution is explicit and does not alter roof gravity or normal pressures',()=>{
   const p=cloneDefault(),t=analyze(p);p.distribution='equal';const r=analyze(p);
@@ -78,7 +78,7 @@ test('engineer-entered Chapter 15 Cs is used without silently changing it',()=>{
   const p=flat();p.seismic.method='manual';p.seismic.cs=.125;p.seismic.liveFraction=.25;const r=analyze(p);close(r.weight,(12+.25*20)*480);close(r.baseShear,.125*r.weight);
 });
 test('C&C pressures and forces are separate from MWFRS post actions',()=>{
-  const p=flat(),r=analyze(p);p.wind.ccArea=33;p.wind.cc[0].up=7;const other=analyze(p);close(other.cc[0].upForce,r.q*7*33);close(other.cc[0].downPressure,r.q*p.wind.cc[0].down);assert.deepEqual(other.basic['WX+'].reactions,r.basic['WX+'].reactions);
+  const p=flat(),r=analyze(p);p.wind.ccArea=33;p.wind.cc[0].up=7;const other=analyze(p);close(other.cc[0].upForce,r.windPressure*7*33);close(other.cc[0].downPressure,r.windPressure*p.wind.cc[0].down);assert.deepEqual(other.basic['WX+'].reactions,r.basic['WX+'].reactions);
 });
 test('post envelopes preserve governing cases and component extrema',()=>{
   const r=analyze(flat()),rows=envelope(r,'LRFD');for(let i=0;i<rows.length;i++)for(let j=0;j<6;j++){

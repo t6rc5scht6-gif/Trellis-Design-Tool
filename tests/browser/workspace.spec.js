@@ -123,3 +123,55 @@ test('saved version 1 projects recalculate with all eight 100/30 design patterns
   await expect(page.locator('.calc-combo-name')).toContainText('0.3EX− + EY+');
   await page.getByRole('tab',{name:'Load combinations'}).click();await expect(page.getByText('No snow, rain, floor live load, or overstrength combinations.',{exact:false})).toBeVisible();
 });
+
+test('automatic C&C selects gable/mono figures, updates blockage and area bands, and persists',async({page})=>{
+  const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('/');
+  await page.getByRole('button',{name:'Wind & C&C 03',exact:true}).click();
+  await page.getByLabel('C&C coefficient source',{exact:true}).selectOption('asce-30.5');
+  await page.getByRole('tab',{name:'Components & cladding',exact:true}).click();
+  await expect(page.locator('.cc-source-banner')).toContainText('30.5-2');
+  await expect(page.locator('.cc-coefficient-table tbody tr')).toHaveCount(3);
+  await expect(page.locator('.cc-equation')).toContainText('p = qh Kd G CN');
+  await page.getByLabel('Blockage below roof',{exact:true}).fill('50');
+  await expect(page.locator('.cc-source-banner')).toContainText('clear flow');
+  await page.getByLabel('Blockage below roof',{exact:true}).fill('51');
+  await expect(page.locator('.cc-source-banner')).toContainText('obstructed flow');
+  await page.getByRole('button',{name:'Geometry 01',exact:true}).click();
+  await page.getByLabel('Roof shape',{exact:true}).selectOption('mono');
+  await page.getByLabel('Roof slope',{exact:true}).fill('0');
+  await expect(page.locator('.cc-source-banner')).toContainText('30.5-1');
+  await page.getByRole('button',{name:'Wind & C&C 03',exact:true}).click();
+  await page.getByLabel('Blockage below roof',{exact:true}).fill('0');
+  await page.getByLabel('Effective wind area',{exact:true}).fill('9');
+  await expect(page.locator('.cc-coefficient-table tbody tr').last().locator('td').nth(1)).toHaveText('2.400');
+  await page.getByLabel('Effective wind area',{exact:true}).fill('9.001');
+  await expect(page.locator('.cc-coefficient-table tbody tr').last().locator('td').nth(1)).toHaveText('1.800');
+  await page.getByLabel('Effective wind area',{exact:true}).fill('36.001');
+  await expect(page.locator('.cc-coefficient-table tbody tr').last().locator('td').nth(1)).toHaveText('1.200');
+  await page.reload();await page.getByRole('tab',{name:'Components & cladding',exact:true}).click();
+  await expect(page.locator('.cc-source-banner')).toContainText('30.5-1');
+  await expect(page.locator('.cc-coefficient-table tbody tr').last().locator('td').nth(1)).toHaveText('1.200');
+  expect(errors).toEqual([]);
+});
+test('unsupported automatic C&C geometry blocks results and explicit manual selection restores them',async({page})=>{
+  await page.goto('/');await page.getByRole('button',{name:'Wind & C&C 03',exact:true}).click();
+  await page.getByLabel('C&C coefficient source',{exact:true}).selectOption('asce-30.5');
+  await page.getByRole('button',{name:'Geometry 01',exact:true}).click();await page.getByLabel('Eave height',{exact:true}).fill('1');
+  await expect(page.getByRole('heading',{name:'Check your inputs',exact:true})).toBeVisible();
+  await expect(page.getByText(/Required: 0.25 ≤ h\/L ≤ 1.00/).first()).toBeVisible();
+  await expect(page.getByRole('button',{name:'Export report',exact:true})).toBeDisabled();
+  await page.getByRole('button',{name:'Wind & C&C 03',exact:true}).click();await page.getByLabel('C&C coefficient source',{exact:true}).selectOption('manual');
+  await expect(page.getByRole('button',{name:'Export report',exact:true})).toBeEnabled();
+});
+test('automatic C&C review invalidates on input changes and fits the mobile screen',async({page})=>{
+  await page.goto('/');await page.getByRole('button',{name:'Wind & C&C 03',exact:true}).click();
+  await page.getByLabel('C&C coefficient source',{exact:true}).selectOption('asce-30.5');
+  await page.getByLabel('I verified the gust factor, entered pressure floor, figure applicability, and component zone.').check();
+  await page.getByRole('tab',{name:'Components & cladding',exact:true}).click();
+  await expect(page.locator('.cc-review-status')).toContainText('marked reviewed');
+  await page.getByLabel('C&C gust factor · G',{exact:true}).fill('1');
+  await expect(page.getByLabel('I verified the gust factor, entered pressure floor, figure applicability, and component zone.')).not.toBeChecked();
+  await page.setViewportSize({width:390,height:844});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await expect(page.locator('.cc-pressure-table')).toBeVisible();
+});

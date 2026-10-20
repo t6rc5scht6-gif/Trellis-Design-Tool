@@ -1,3 +1,4 @@
+import { deriveCc, isAutomaticCc } from './windTables.js';
 // Direct hand calculations for independent fixed-base cantilever columns.
 // Units: feet, pounds, pound-feet. No stiffness matrix or FEA.
 export const DEFAULT_PROJECT = {
@@ -8,6 +9,7 @@ export const DEFAULT_PROJECT = {
     cfX: 1.3, cfY: 1.3, areaX: 60, areaY: 50, roofX1: 0.9, roofX2: 0.9, roofY1: 0.7, roofY2: 0.7,
     roofX1Down: -0.6, roofX2Down: -0.6, roofY1Down: -0.5, roofY2Down: -0.5,
     uniformRoof: true, ccArea: 10, ccEffectiveArea: 10,
+    ccSource: 'manual', ccBlockage: 0, ccGust: 0.85, ccMinimumPressure: 16, ccMeanHeight: '', ccPressureReviewed: false,
     cc: [{name:'Interior',up:0.9,down:-0.6},{name:'Edge',up:1.4,down:-0.8},{name:'Corner',up:1.8,down:-1.0}],
     reviewed: false, reference: 'Illustrative coefficients. Select net coefficients for the applicable free-roof procedure and effective wind area.' },
   seismic: { sds: 0.81, sd1: 0.51, s1: 0.29, ss: 0.88, tl: 8, sdc: 'D', site: 'Default',
@@ -51,8 +53,12 @@ export function validate(p) {
   for (const k of ['speed','kz','kzt','kd','ke','ccArea','ccEffectiveArea']) positive(w[k],`Wind ${k}`);
   for (const k of ['cfX','cfY','areaX','areaY']) positive(w[k],`Wind ${k}`,true);
   for (const k of ['roofX1','roofX2','roofY1','roofY2']) { positive(w[k],`Uplift ${k}`,true); if(!Number.isFinite(w[k+'Down'])||w[k+'Down']>0)fail(`Downward ${k} must be finite and nonpositive.`); }
+  if (!['manual','asce-30.5'].includes(w.ccSource??'manual')) fail('Choose a supported C&C coefficient source.');
   if (!Array.isArray(w.cc) || w.cc.length !== 3) fail('Three C&C regions are required.');
-  for (const zone of w.cc) if (typeof zone.name !== 'string' || !Number.isFinite(zone.up) || zone.up < 0 || !Number.isFinite(zone.down) || zone.down > 0) fail('C&C coefficients require nonnegative uplift and nonpositive downward values.');
+  for (const zone of w.cc) {
+    if (typeof zone.name !== 'string') fail('C&C region names must be text.');
+    if (!isAutomaticCc(p) && (!Number.isFinite(zone.up) || zone.up < 0 || !Number.isFinite(zone.down) || zone.down > 0)) fail('C&C coefficients require nonnegative uplift and nonpositive downward values.');
+  }
   for (const k of ['sds','sd1','s1','ss','sa','cs','verticalFactor','liveFraction']) positive(s[k],`Seismic ${k}`,true);
   for (const k of ['tl','r','ie','rho','period']) positive(s[k],`Seismic ${k}`);
   if (!['elf','manual'].includes(s.method)) fail('Choose a supported seismic method.');
@@ -79,7 +85,9 @@ export function geometry(p) {
   }
   return {nodes,posts,members,cells,xs,ys:yp,area:p.width*p.length,roofArea:cells.reduce((s,c)=>s+c.area*Math.sqrt(1+c.slope*c.slope),0)};
 }
-export function velocityPressure(w){return 0.00256*w.kz*w.kzt*w.kd*w.ke*w.speed**2;}
+export const directionalityInQ=p=>p.code.includes('7-16');
+export function velocityPressure(w,code='ASCE 7-22'){return 0.00256*w.kz*w.kzt*w.ke*w.speed**2*(code.includes('7-16')?w.kd:1);}
+export const velocityPressureFormula=p=>directionalityInQ(p)?'qh = 0.00256 Kz Kzt Kd Ke Vult²':'qh = 0.00256 Kz Kzt Ke Vult²';
 export function seismicCoefficient(s) {
   if(s.method==='manual')return {cs:s.cs,raw:s.cs,minimum:0,governing:'Engineer-entered Cs; confirm Chapter 15 minimum and spectrum requirements separately'};
   const raw=s.sa*s.ie/1.5,minimum=Math.max(0.044*s.sds*s.ie,0.01,s.s1>=0.6?0.5*s.s1*s.ie/1.5:0);
@@ -139,7 +147,7 @@ export function roofForce(p,post,axis,sign,down,q){
   return {force:f,halves:halfAreas};
 }
 export function analyze(p){
-  validate(p);const model=geometry(p),q=velocityPressure(p.wind),weight=(p.dead+p.live*p.seismic.liveFraction)*model.area;
+  validate(p);const model=geometry(p),q=velocityPressure(p.wind,p.code),windPressure=q*(directionalityInQ(p)?1:p.wind.kd),weight=(p.dead+p.live*p.seismic.liveFraction)*model.area;
   const seismicResult=seismicCoefficient(p.seismic),cs=seismicResult.cs,baseShear=cs*weight;
   const basic={},windForces={},postCalcs=model.posts.map(post=>({...post,share:p.distribution==='equal'?1/model.posts.length:post.area/model.area,dead:p.dead*post.area,live:p.live*post.area}));
   const makeCase=(name,forces,details={})=>{
@@ -149,18 +157,18 @@ export function analyze(p){
   };
   makeCase('D',postCalcs.map(post=>[0,0,-post.dead]));makeCase('Lr',postCalcs.map(post=>[0,0,-post.live]));
   for(const axis of ['X','Y'])for(const sign of [1,-1])for(const down of [false,true]){
-    const name=`W${axis}${sign>0?'+':'−'}${down?'↓':''}`,H=q*p.wind[`cf${axis}`]*p.wind[`area${axis}`],details=[];
+    const name=`W${axis}${sign>0?'+':'−'}${down?'↓':''}`,H=windPressure*p.wind[`cf${axis}`]*p.wind[`area${axis}`],details=[];
     const forces=postCalcs.map(post=>{
-      const roof=roofForce(p,post,axis,sign,down,q),f=[...roof.force],horizontal=sign*H*post.share;
+      const roof=roofForce(p,post,axis,sign,down,windPressure),f=[...roof.force],horizontal=sign*H*post.share;
       f[axis==='X'?0:1]+=horizontal;details.push({horizontal,roof});return f;
     });
     makeCase(name,forces,{posts:details,referenceForce:H,down});windForces[name]=basic[name].totalLoad;
   }
   for(const axis of ['X','Y'])for(const sign of [1,-1])makeCase(`E${axis}${sign>0?'+':'−'}`,postCalcs.map(post=>axis==='X'?[sign*baseShear*post.share,0,0]:[0,sign*baseShear*post.share,0]));
   const cases=combinations(p).map(c=>({...c,reactions:model.posts.map((_,i)=>Array.from({length:6},(_,j)=>Object.entries(c.factors).reduce((s,[key,factor])=>s+basic[key].reactions[i][j]*factor,0))),totalLoad:[0,1,2].map(j=>Object.entries(c.factors).reduce((s,[key,factor])=>s+basic[key].totalLoad[j]*factor,0))}));
-  const cc=p.wind.cc.map(z=>({...z,upPressure:q*z.up,downPressure:q*z.down,upForce:q*z.up*p.wind.ccArea,downForce:q*z.down*p.wind.ccArea}));
+  const ccResult=deriveCc(p,q),cc=ccResult.zones;
   const forceAccountingError=Math.max(Math.abs(postCalcs.reduce((s,v)=>s+v.area,0)-model.area),Math.abs(basic['EX+'].totalLoad[0]-baseShear));
-  return {model,basic,cases,q,weight,cs,baseShear,seismicResult,cc,windForces,postCalcs,forceAccountingError};
+  return {model,basic,cases,q,windPressure,weight,cs,baseShear,seismicResult,cc,ccResult,windForces,postCalcs,forceAccountingError};
 }
 export function envelope(result,family) {
   const cases=result.cases.filter(c=>c.family===family);
@@ -193,7 +201,9 @@ export function governingPostMetrics(caseInfo,post){
   return caseInfo?caseInfo.metrics.filter(key=>caseInfo.posts[key].includes(post)):[];
 }
 export function warnings(p){return [
-  ...(!p.wind.reviewed?['Wind coefficients and reference areas are illustrative and require project-specific code selection.']:[]),
+  ...(!p.wind.reviewed?[isAutomaticCc(p)?'MWFRS wind coefficients and reference areas remain manual and require project-specific code selection.':'Wind coefficients and reference areas are illustrative and require project-specific code selection.']:[]),
+  ...(isAutomaticCc(p)&&!p.wind.ccPressureReviewed?['C&C CN values are derived from the supplied figures. Pressure uses ASCE 7-22 Eq. (30.5-1), p = qh Kd G CN. Confirm the entered G and minimum-pressure floor; the 16 psf starting floor is a project input, not derived from these figures.']:[]),
+  ...(isAutomaticCc(p)?['C&C zones are the numbered regions in the selected figure. Confirm component location from the figure, including the gable layout change at 10°; automatic component-location/zone assignment is not performed.']:[]),
   ...(!p.seismic.reviewed?['Confirm the Chapter 15 classification, design spectrum ordinate Sa(T), period, Cs, and vertical seismic factor. R is fixed at 1.5 by project instruction.']:[]),
   ...(p.seismic.site==='Default'?['The hazard report uses Default soil class. Confirm site class and the applicable spectrum procedure.']:[]),
   ...(p.code.includes('7-16')&&p.hazard?.source?.includes('7-22')?['The ASCE 7-22 hazard report does not match the selected ASCE 7-16 edition.']:[]),
