@@ -1,0 +1,91 @@
+import {test,expect} from '@playwright/test';
+import path from 'node:path';
+const report=process.env.HAZARD_REPORT_PATH;
+test('canopy inputs recalculate, invalid geometry blocks output, and projects persist',async({page})=>{
+  const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.goto('/');
+  await expect(page.getByRole('heading',{name:'From roof to foundation.'})).toBeVisible();
+  await expect(page.getByText('9 cantilever columns')).toBeVisible();
+  await page.getByLabel('Width · X',{exact:true}).fill('30');
+  await expect(page.getByLabel('X post coordinates')).toHaveValue('0, 15, 30');
+  await expect(page.locator('.metric-card').first().locator('strong')).toHaveText('720ft²');
+  await page.getByLabel('Width · X',{exact:true}).fill('');
+  await page.getByLabel('Width · X',{exact:true}).pressSequentially('30');
+  await expect(page.getByLabel('X post coordinates')).toHaveValue('0, 15, 30');
+  await page.getByLabel('X post coordinates').fill('0, 30');
+  await expect(page.getByText('6 cantilever columns')).toBeVisible();
+  await page.getByLabel('Y post coordinates').fill('0, 0, 24');
+  await expect(page.getByRole('heading',{name:'Check your inputs'})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Export report'})).toBeDisabled();
+  await page.getByLabel('Y post coordinates').fill('0, 24');
+  await expect(page.getByText('4 cantilever columns')).toBeVisible();
+  await page.reload();await expect(page.getByLabel('Width · X',{exact:true})).toHaveValue('30');
+  expect(errors).toEqual([]);
+});
+test('all result tabs, combinations, envelopes, and exports work',async({page})=>{
+  await page.goto('/');
+  await page.getByRole('tab',{name:'Post reactions',exact:true}).click();
+  await page.getByRole('button',{name:'ASD',exact:true}).click();
+  await page.getByRole('combobox',{name:'Load combination'}).selectOption('0.6D + 0.6WX+');
+  await page.getByRole('button',{name:'Show envelope'}).click();
+  await expect(page.getByText('ASD independent component envelopes')).toBeVisible();
+  await page.getByRole('button',{name:'Show concurrent case'}).click();
+  await page.getByRole('tab',{name:'Components & cladding'}).click();
+  await expect(page.getByRole('cell',{name:'Corner',exact:true})).toBeVisible();
+  await page.getByRole('tab',{name:'Calculation basis'}).click();
+  await expect(page.getByText('Tributary load accounting verified')).toBeVisible();
+  await page.getByRole('tab',{name:'Load combinations'}).click();
+  await page.getByRole('button',{name:'1.4D',exact:true}).click();
+  await expect(page.getByRole('tab',{name:'Post reactions'})).toHaveAttribute('aria-selected','true');
+  const csv=page.waitForEvent('download');await page.getByRole('button',{name:'Export reactions'}).click();
+  expect((await csv).suggestedFilename()).toBe('trellis-base-reactions.csv');
+  const html=page.waitForEvent('download');await page.getByRole('button',{name:'Export report'}).click();
+  expect((await html).suggestedFilename()).toBe('trellis-calculation-report.html');
+  const json=page.waitForEvent('download');await page.getByRole('button',{name:'Save project'}).click();
+  expect((await json).suggestedFilename()).toBe('trellis-project.json');
+});
+test('project import rejects malformed input and accepts valid exported settings',async({page})=>{
+  await page.goto('/');
+  await page.getByLabel('Import project JSON').setInputFiles({name:'bad.json',mimeType:'application/json',buffer:Buffer.from('{"version":1}')});
+  await expect(page.getByRole('status')).toContainText('Project import:');
+  const valid=await page.evaluate(()=>localStorage.getItem('trellis-project-v1'));
+  const p=JSON.parse(valid);p.name='Imported test canopy';
+  await page.getByLabel('Import project JSON').setInputFiles({name:'project.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(p))});
+  await expect(page.getByRole('status')).toContainText('Project imported and recalculated');
+  await expect(page.locator('.breadcrumbs strong')).toHaveText('Imported test canopy');
+});
+test('seismic system stays R=1.5 and manual coefficient recalculates base shear',async({page})=>{
+  await page.goto('/');await page.getByRole('button',{name:/Seismic/}).first().click();
+  await expect(page.getByText('Cantilever-column system',{exact:true})).toBeVisible();
+  await page.getByLabel('Base shear procedure').selectOption('manual');
+  await page.getByLabel('Chapter 15 coefficient · Cs').fill('0.1');
+  await expect(page.locator('.metric-card.emphasized strong')).toContainText('0.58');
+});
+test('layout fits mobile screen and navigation remains usable',async({page})=>{
+  await page.setViewportSize({width:390,height:844});await page.goto('/');
+  await page.getByRole('button',{name:'Open navigation'}).click();
+  await page.getByRole('button',{name:/Gravity loads/}).click();
+  await expect(page.getByLabel('Dead load · D')).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+});
+test('imports the supplied ASCE hazard PDF in the browser',async({page})=>{
+  test.skip(!report,'Set HAZARD_REPORT_PATH to run the real-report import test.');
+  const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.goto('/');await page.getByLabel('Upload ASCE hazards PDF').setInputFiles(path.resolve(report));
+  await expect(page.getByRole('status')).toContainText('Imported speed, sds, sd1, ss, s1, tl',{timeout:30000});
+  const p=JSON.parse(await page.evaluate(()=>localStorage.getItem('trellis-project-v1')));
+  expect(p.wind.speed).toBe(93);expect(p.seismic.sds).toBe(.81);expect(p.seismic.sd1).toBe(.51);expect(p.seismic.s1).toBe(.29);expect(p.seismic.tl).toBe(8);expect(p.seismic.r).toBe(1.5);
+  expect(errors).toEqual([]);
+});
+
+test('hand calculation sheet shows arithmetic, code references and common-base envelope',async({page})=>{
+  await page.goto('/');
+  await expect(page.getByRole('tab',{name:'Hand calculations'})).toHaveAttribute('aria-selected','true');
+  await expect(page.getByText('Method: tributary loads → independent cantilever → M = Hh.')).toBeVisible();
+  await expect(page.getByText('ASCE 7 §26.10 · applicable free-roof procedure',{exact:true})).toBeVisible();
+  await expect(page.getByText('My,W = Vx,W × h',{exact:true})).toBeVisible();
+  await expect(page.locator('.governing-cards button')).toHaveCount(4);
+  await page.locator('.governing-cards button').last().click();
+  await expect(page.getByLabel('Worked post')).toHaveValue('P05');
+  await expect(page.locator('.calc-combo-name')).toContainText('LRFD');
+});
