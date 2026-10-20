@@ -61,7 +61,7 @@ export function applyHazards(project,parsed,name) {
   for(const [k,v] of Object.entries(parsed.values))if(Number.isFinite(v)){(k==='speed'?p.wind:p.seismic)[k]=v;fields.push(k);}
   if(parsed.address){p.address=parsed.address;fields.push('address');}
   if(parsed.sdc)p.seismic.sdc=parsed.sdc;if(parsed.site)p.seismic.site=parsed.site;if(parsed.risk)p.risk=parsed.risk;
-  p.wind.reviewed=false;p.wind.ccPressureReviewed=false;p.seismic.reviewed=false;
+  p.wind.reviewed=false;p.wind.ccPressureReviewed=false;p.wind.longitudinalReviewed=false;p.seismic.reviewed=false;
   p.hazard={name,source:`Imported ASCE/SEI 7-${parsed.edition||'unknown'} PDF`,latitude:parsed.latitude,longitude:parsed.longitude,address:parsed.address,importedAt:new Date().toISOString()};
   // Sa(T), R, Cs, vertical seismic factor, and wind coefficients are intentionally not inferred.
   return {project:p,fields};

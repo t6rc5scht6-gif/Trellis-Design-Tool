@@ -1,3 +1,4 @@
+import { deriveLongitudinalWind, isEnvelopeLongitudinal, longitudinalPostShare } from './longitudinalWind.js';
 import { deriveCc, isAutomaticCc } from './windTables.js';
 // Direct hand calculations for independent fixed-base cantilever columns.
 // Units: feet, pounds, pound-feet. No stiffness matrix or FEA.
@@ -6,7 +7,8 @@ export const DEFAULT_PROJECT = {
   code: '2025 CBC / ASCE 7-22', risk: 'II', roof: 'gable', width: 20, length: 24, height: 10, slope: 2,
   xPosts: '0, 10, 20', yPosts: '0, 12, 24', dead: 12, live: 20, distribution: 'tributary',
   wind: { speed: 93, kz: 0.85, kzt: 1, kd: 0.85, ke: 1, exposure: 'C',
-    cfX: 1.3, cfY: 1.3, areaX: 60, areaY: 50, roofX1: 0.9, roofX2: 0.9, roofY1: 0.7, roofY2: 0.7,
+    cfX: 1.3, cfY: 1.3, areaX: 60, areaY: 50,
+    longitudinalSource: 'manual', longitudinalCoefficientMode: 'edge-envelope', windwardEndEdgeArea: '', leewardEndEdgeArea: '', endSolidArea: 0, longitudinalGcWindward: '', longitudinalGcLeeward: '', longitudinalCoefficientReference: '', longitudinalReviewed: false, roofX1: 0.9, roofX2: 0.9, roofY1: 0.7, roofY2: 0.7,
     roofX1Down: -0.6, roofX2Down: -0.6, roofY1Down: -0.5, roofY2Down: -0.5,
     uniformRoof: true, ccArea: 10, ccEffectiveArea: 10,
     ccSource: 'manual', ccBlockage: 0, ccGust: 0.85, ccMinimumPressure: 16, ccMeanHeight: '', ccPressureReviewed: false,
@@ -51,7 +53,8 @@ export function validate(p) {
   for (const [value,label] of [[w.reference,'Wind reference'],[s.reference,'Seismic reference'],[s.site,'Soil class'],[s.sdc,'Seismic category']]) if (typeof value !== 'string') fail(`${label} must be text.`);
   if (!['B','C','D'].includes(w.exposure)) fail('Choose a valid exposure.');
   for (const k of ['speed','kz','kzt','kd','ke','ccArea','ccEffectiveArea']) positive(w[k],`Wind ${k}`);
-  for (const k of ['cfX','cfY','areaX','areaY']) positive(w[k],`Wind ${k}`,true);
+  if (!['manual','asce-28.3.7'].includes(w.longitudinalSource??'manual')) fail('Choose a supported longitudinal wind source.');
+  for (const k of (isEnvelopeLongitudinal(p)?['cfX','areaX']:['cfX','cfY','areaX','areaY'])) positive(w[k],`Wind ${k}`,true);
   for (const k of ['roofX1','roofX2','roofY1','roofY2']) { positive(w[k],`Uplift ${k}`,true); if(!Number.isFinite(w[k+'Down'])||w[k+'Down']>0)fail(`Downward ${k} must be finite and nonpositive.`); }
   if (!['manual','asce-30.5'].includes(w.ccSource??'manual')) fail('Choose a supported C&C coefficient source.');
   if (!Array.isArray(w.cc) || w.cc.length !== 3) fail('Three C&C regions are required.');
@@ -149,26 +152,28 @@ export function roofForce(p,post,axis,sign,down,q){
 export function analyze(p){
   validate(p);const model=geometry(p),q=velocityPressure(p.wind,p.code),windPressure=q*(directionalityInQ(p)?1:p.wind.kd),weight=(p.dead+p.live*p.seismic.liveFraction)*model.area;
   const seismicResult=seismicCoefficient(p.seismic),cs=seismicResult.cs,baseShear=cs*weight;
+  const longitudinal=deriveLongitudinalWind(p,q,model.ys.length);
   const basic={},windForces={},postCalcs=model.posts.map(post=>({...post,share:p.distribution==='equal'?1/model.posts.length:post.area/model.area,dead:p.dead*post.area,live:p.live*post.area}));
   const makeCase=(name,forces,details={})=>{
-    const reactions=forces.map(([fx,fy,fz],i)=>[fx,fy,fz,-fy*model.posts[i].pos[2],fx*model.posts[i].pos[2],0]);
+    const reactions=forces.map(([fx,fy,fz],i)=>[fx,fy,fz,-fy*(details.longitudinal?details.posts[i].horizontalHeight:model.posts[i].pos[2]),fx*model.posts[i].pos[2],0]);
     const totalLoad=[0,1,2].map(j=>forces.reduce((sum,f)=>sum+f[j],0));
     basic[name]={reactions,totalLoad,support:reactions.map(row=>row.map(v=>-v)),details};
   };
   makeCase('D',postCalcs.map(post=>[0,0,-post.dead]));makeCase('Lr',postCalcs.map(post=>[0,0,-post.live]));
   for(const axis of ['X','Y'])for(const sign of [1,-1])for(const down of [false,true]){
-    const name=`W${axis}${sign>0?'+':'−'}${down?'↓':''}`,H=windPressure*p.wind[`cf${axis}`]*p.wind[`area${axis}`],details=[];
+    const name=`W${axis}${sign>0?'+':'−'}${down?'↓':''}`,H=axis==='Y'&&longitudinal?longitudinal.force:windPressure*p.wind[`cf${axis}`]*p.wind[`area${axis}`],details=[];
     const forces=postCalcs.map(post=>{
-      const roof=roofForce(p,post,axis,sign,down,windPressure),f=[...roof.force],horizontal=sign*H*post.share;
-      f[axis==='X'?0:1]+=horizontal;details.push({horizontal,roof});return f;
+      const roof=roofForce(p,post,axis,sign,down,windPressure),f=[...roof.force],share=axis==='Y'&&longitudinal?longitudinalPostShare(p,post):post.share,horizontal=sign*H*share;
+      const horizontalHeight=axis==='Y'&&longitudinal?Math.max(post.pos[2],longitudinal.centroidZ):post.pos[2];
+      f[axis==='X'?0:1]+=horizontal;details.push({horizontal,roof,share,horizontalHeight});return f;
     });
-    makeCase(name,forces,{posts:details,referenceForce:H,down});windForces[name]=basic[name].totalLoad;
+    makeCase(name,forces,{posts:details,referenceForce:H,down,longitudinal:axis==='Y'&&!!longitudinal});windForces[name]=basic[name].totalLoad;
   }
   for(const axis of ['X','Y'])for(const sign of [1,-1])makeCase(`E${axis}${sign>0?'+':'−'}`,postCalcs.map(post=>axis==='X'?[sign*baseShear*post.share,0,0]:[0,sign*baseShear*post.share,0]));
   const cases=combinations(p).map(c=>({...c,reactions:model.posts.map((_,i)=>Array.from({length:6},(_,j)=>Object.entries(c.factors).reduce((s,[key,factor])=>s+basic[key].reactions[i][j]*factor,0))),totalLoad:[0,1,2].map(j=>Object.entries(c.factors).reduce((s,[key,factor])=>s+basic[key].totalLoad[j]*factor,0))}));
   const ccResult=deriveCc(p,q),cc=ccResult.zones;
   const forceAccountingError=Math.max(Math.abs(postCalcs.reduce((s,v)=>s+v.area,0)-model.area),Math.abs(basic['EX+'].totalLoad[0]-baseShear));
-  return {model,basic,cases,q,windPressure,weight,cs,baseShear,seismicResult,cc,ccResult,windForces,postCalcs,forceAccountingError};
+  return {model,basic,cases,q,windPressure,weight,cs,baseShear,seismicResult,cc,ccResult,longitudinal,windForces,postCalcs,forceAccountingError};
 }
 export function envelope(result,family) {
   const cases=result.cases.filter(c=>c.family===family);
@@ -201,13 +206,15 @@ export function governingPostMetrics(caseInfo,post){
   return caseInfo?caseInfo.metrics.filter(key=>caseInfo.posts[key].includes(post)):[];
 }
 export function warnings(p){return [
-  ...(!p.wind.reviewed?[isAutomaticCc(p)?'MWFRS wind coefficients and reference areas remain manual and require project-specific code selection.':'Wind coefficients and reference areas are illustrative and require project-specific code selection.']:[]),
+  ...(!p.wind.reviewed?[isEnvelopeLongitudinal(p)?'Transverse and roof MWFRS wind coefficients/reference areas remain manual and require project-specific code selection.':isAutomaticCc(p)?'MWFRS wind coefficients and reference areas remain manual and require project-specific code selection.':'Wind coefficients and reference areas are illustrative and require project-specific code selection.']:[]),
+  ...(isEnvelopeLongitudinal(p)?['§28.3.7 supplies longitudinal ±Y force only. Verify Chapter 28 eligibility, Figure 28.3-1 Load Case 2 area-averaged coefficients, transverse-frame configuration, and the longitudinal sidewall load path. The referenced Chapter 27 roof pressures and transverse wind remain separate project inputs. Figure 28.3-1 supplies the Case 2 end-wall coefficients; the chosen averaging/envelope assumption is reported.']:[]),
+  ...(isEnvelopeLongitudinal(p)&&!p.wind.longitudinalReviewed?['Longitudinal envelope inputs/load path are not marked reviewed. The hand model splits F equally to the two outer sidewalls and assigns it along each sidewall by tributary length. Base design moments conservatively use max(post-top height, end-wall centroid height).']:[]),
   ...(isAutomaticCc(p)&&!p.wind.ccPressureReviewed?['C&C CN values are derived from the supplied figures. Pressure uses ASCE 7-22 Eq. (30.5-1), p = qh Kd G CN. Confirm the entered G and minimum-pressure floor; the 16 psf starting floor is a project input, not derived from these figures.']:[]),
   ...(isAutomaticCc(p)?['C&C zones are the numbered regions in the selected figure. Confirm component location from the figure, including the gable layout change at 10°; automatic component-location/zone assignment is not performed.']:[]),
   ...(!p.seismic.reviewed?['Confirm the Chapter 15 classification, design spectrum ordinate Sa(T), period, Cs, and vertical seismic factor. R is fixed at 1.5 by project instruction.']:[]),
   ...(p.seismic.site==='Default'?['The hazard report uses Default soil class. Confirm site class and the applicable spectrum procedure.']:[]),
   ...(p.code.includes('7-16')&&p.hazard?.source?.includes('7-22')?['The ASCE 7-22 hazard report does not match the selected ASCE 7-16 edition.']:[]),
-  `Independent cantilever posts; roof gravity and roof-normal wind loads use geometric tributary areas. Horizontal reference wind and seismic shear use ${p.distribution==='equal'?'equal load per post':'tributary area fractions'}. This is an assigned load path, not a stiffness redistribution or a universal conservative bound.`,
+  `Independent cantilever posts; roof gravity and roof-normal wind loads use geometric tributary areas. ${isEnvelopeLongitudinal(p)?'Transverse wind and seismic use':'Horizontal reference wind and seismic use'} ${p.distribution==='equal'?'equal load per post':'tributary area fractions'}${isEnvelopeLongitudinal(p)?'; §28.3.7 longitudinal wind uses the two outer sidewalls and their tributary lengths':''}. This is an assigned load path, not a stiffness redistribution or a universal conservative bound.`,
   ...(p.wind.uniformRoof?['For each direction and sign, apply the governing net roof coefficient uniformly. This envelopes the entered local pressures but does not replace checking all required code wind patterns.']:[]),
   'Roof-load eccentric moments, diaphragm torsion, accidental torsion, P–Δ, overstrength/anchorage, and member/connection/foundation capacity are outside this hand-calculation scope.',
   'Seismic design combinations include all eight signed 100%/30% orthogonal patterns. This implements directional force effects; member/foundation strength and drift acceptance checks remain outside the app.',

@@ -33,7 +33,7 @@ For each post:
 - For horizontal reference wind, `H = qh GCf Aref`; post shear is `H × At/A` by default.
 - Roof wind acts normal to each roof half. Integrate its components over the post's tributary rectangle: `Fz = sum(p At,half)` and `Fx,roof = -sum(p slope At,half)`. This is equivalent to multiplying normal pressure by actual roof area and the unit normal.
 - Seismic base shear is `V = Cs W`; post shear is `V × At/A` by default. This is a single roof-level hand allocation without a height-exponent distribution.
-- For every basic and combined case, `My = Vx × h`, `Mx = -Vy × h`, and `Mz = 0`, using the actual post height. No benefit is taken for top restraint.
+- For the manual wind and seismic cases, `My = Vx × h`, `Mx = -Vy × h`, and `Mz = 0`, using the actual post height. The optional §28.3.7 longitudinal wind uses the conservative lever arm described below; combinations superpose signed basic actions. No benefit is taken for top restraint.
 
 Global X is across the width, Y along the length, Z upward. Base actions are **loads delivered by the structure to the foundation**. Positive Fz means uplift; the displayed compression is `N = -Fz`. Moments follow the right-hand rule. Every row is one concurrent set.
 
@@ -79,11 +79,38 @@ The result tab and printable hand sheet show source figure, θ, h, both h/L rati
 
 C&C results remain local component demands; they do not modify or add to MWFRS post reactions. Manual mode preserves entered net coefficients and applies no extra gust factor.
 
+## Longitudinal open-building wind — §28.3.7
+
+In **Wind & C&C**, select **Longitudinal wind method → ASCE §28.3.7**. Existing projects retain the manual method until switched. This implements the supplied ASCE 7-22 horizontal wind procedure for gable/pitched roofs with transverse frames, parallel to the ridge (Y). It checks `0° < θ < 45°`, low-rise height `h ≤ 60 ft` and `h ≤ least plan dimension`; the engineer must verify all remaining Chapter 28 conditions and the structural load path. Other roof shapes/editions require an applicable manual procedure.
+
+The source is Figure 28.3-1 Load Case 2: surface **5 = +0.40, 5E = +0.61, 6 = −0.29, 6E = −0.43**. Three explicit coefficient options are available:
+
+- **Conservative E envelope (starting option):** use +0.61 and −0.43 over each entire end wall. This bounds any area-weighted mixture of the two supplied coefficients on each wall; it is a conservative assumption rather than inferred E-zone geometry.
+- **Area-weighted:** enter actual 5E and 6E areas from the source figure. Each remaining area uses 5 or 6; arithmetic is shown. The two end orientations are checked by swapping the entered areas, and the larger force is conservatively used for both Y signs. Areas must be between zero and AE.
+- **Manual average override:** enter project-specific signed area averages and their source.
+
+With B across the ridge, AE includes the full equivalent enclosed rectangular end wall and gable triangle. As is effective solid end-wall area (including exposed fascia where applicable), entered independently, `0 ≤ As ≤ AE`. The hand sheet calculates:
+
+```text
+φ = As / AE
+n = max(number of Y frame lines, 3)
+KB = 1.8 − 0.01 B for B < 100 ft; otherwise 0.8
+KS = 0.60 + 0.073(n − 3) + 1.25 φ^1.8
+p = qh Kd [(GCpf)windward − (GCpf)leeward] KB KS   (28.3-3)
+F = p AE                                             (28.3-4)
+```
+
+Kd enters once, and GCpf already includes gust effects. F uses **AE**, even for a fully open end wall with As = 0. Enter Kz appropriate to h; no automatic Kz lookup occurs.
+
+The supplied section applies F at the AE centroid. A symmetric gable puts that centroid at B/2 across the roof, so each outer sidewall receives F/2. The hand method assigns each wall's force along Y by tributary length. Interior X post lines receive no direct longitudinal reference force. Base moments conservatively use `|HY,i| × max(actual post-top height, AE centroid height)`; this is a design envelope, not a stiffness analysis or roof/bracing capacity check. The assumptions, centroid calculation, all post shares, shears, and moments are printed explicitly. Review the actual sidewall and roof transfer path.
+
+This force replaces the previous manual Y reference force and enters both signed Y cases with the separately entered roof-normal uplift/downward loads, including their X slope components. **The Chapter 27 roof loads referenced by §28.3.7 and transverse X wind still require applicable project inputs.** This change does not implement the entire envelope procedure or derive roof coefficients from Figure 28.3-1. C&C remains separate. Changes to geometry, hazards, or wind inputs clear the longitudinal review flag.
+
 ## Scope
 
 This is an engineering review tool, not automatic CBC/ASCE compliance certification. The user-specified R is recorded rather than verified against a material/system table. Code selection does not automatically supply aerodynamic tables, spectrum ordinates, period limits, system eligibility, or jurisdictional amendments.
 
-The Chapter 2 combination set is reduced to D, Lr, W, and E. Service cases are explicitly unfactored diagnostic studies; ASD applies 0.6 to ultimate wind. Snow, rain/ponding, ice, floor live load, thermal actions, equipment, and other applicable loads need separate treatment. This version implements the 100%/30% directional force-effect combinations, but does not implement accidental torsion, overstrength/anchorage combinations, capacity design, uplift-dependent support behavior, roof-load eccentric transfer moments, P–Delta, member strength, connection/anchor design, foundations, soil flexibility, or roof diaphragm design. Automatic Kz lookup, automatic MWFRS coefficient selection, automatic period estimation, and numeric multi-period spectrum retrieval are not implemented.
+The Chapter 2 combination set is reduced to D, Lr, W, and E. Service cases are explicitly unfactored diagnostic studies; ASD applies 0.6 to ultimate wind. Snow, rain/ponding, ice, floor live load, thermal actions, equipment, and other applicable loads need separate treatment. This version implements the 100%/30% directional force-effect combinations, but does not implement accidental torsion, overstrength/anchorage combinations, capacity design, uplift-dependent support behavior, roof-load eccentric transfer moments, P–Delta, member strength, connection/anchor design, foundations, soil flexibility, or roof diaphragm design. Automatic Kz lookup, automatic transverse/roof MWFRS coefficient selection, automatic period estimation, and numeric multi-period spectrum retrieval are not implemented.
 
 ## Validation
 

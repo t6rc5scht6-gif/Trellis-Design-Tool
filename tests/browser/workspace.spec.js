@@ -175,3 +175,45 @@ test('automatic C&C review invalidates on input changes and fits the mobile scre
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await expect(page.locator('.cc-pressure-table')).toBeVisible();
 });
+
+test('longitudinal envelope lookup shows hand arithmetic, post allocation, exports and persists',async({page})=>{
+  const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('/');
+  await page.getByRole('button',{name:'Wind & C&C 03',exact:true}).click();
+  await page.getByLabel('Longitudinal wind method',{exact:true}).selectOption('asce-28.3.7');
+  await expect(page.locator('.longitudinal-calcs')).toContainText('surface 5 = 0.40, 5E = 0.61, 6 = −0.29, 6E = −0.43');
+  await expect(page.locator('.longitudinal-calcs')).toContainText('Conservative whole-end-wall E-coefficient envelope');
+  await expect(page.locator('.longitudinal-post-table tbody tr')).toHaveCount(9);
+  await expect(page.locator('.longitudinal-post-table tbody tr').nth(4).locator('td').nth(2)).toHaveText('0.000');
+  await expect(page.getByLabel('GCf · Y',{exact:true})).toHaveCount(0);
+  await page.getByLabel('Ultimate wind speed',{exact:true}).fill('100');
+  await page.getByLabel('Kz · exposure',{exact:true}).fill('1');
+  await expect(page.locator('.longitudinal-calcs')).toContainText('4.707 kip');
+  const review=page.getByLabel('I verified Chapter 28 eligibility, transverse frames, coefficient averages, end-wall solidity, and longitudinal sidewall load path.');
+  await review.check();await expect(review).toBeChecked();
+  await page.getByLabel('Effective solid end-wall area · As',{exact:true}).fill('50');await expect(review).not.toBeChecked();
+  await page.getByLabel('End-wall coefficient method',{exact:true}).selectOption('area-weighted');
+  await expect(page.getByRole('button',{name:'Export report',exact:true})).toBeDisabled();
+  await page.getByLabel('Windward surface 5E area',{exact:true}).fill('65');
+  await page.getByLabel('Leeward surface 6E area',{exact:true}).fill('130');
+  await expect(page.locator('.longitudinal-calcs')).toContainText('opposite orientation governs');
+  await expect(page.locator('.longitudinal-calcs')).toContainText('0.8580');
+  await page.reload();await expect(page.locator('.longitudinal-calcs')).toContainText('Area-weighted Case 2 surface averages');
+  const download=page.waitForEvent('download');await page.getByRole('button',{name:'Export report',exact:true}).click();
+  const artifact=await download,stream=await artifact.createReadStream(),chunks=[];for await(const chunk of stream)chunks.push(chunk);
+  const html=Buffer.concat(chunks).toString();expect(html).toContain('Eq. (28.3-3)');expect(html).toContain('opposite orientation governs');expect(html).toContain('GOVERNS');
+  await page.setContent(html);await expect(page.getByText('Longitudinal envelope wind — parallel to ridge',{exact:false}).first()).toBeVisible();
+  expect(errors).toEqual([]);
+});
+test('longitudinal method blocks unsupported roof geometry and remains usable on mobile',async({page})=>{
+  await page.goto('/');await page.getByRole('button',{name:'Wind & C&C 03',exact:true}).click();
+  await page.getByLabel('Longitudinal wind method',{exact:true}).selectOption('asce-28.3.7');
+  await page.getByRole('button',{name:'Geometry 01',exact:true}).click();
+  await page.getByLabel('Roof shape',{exact:true}).selectOption('mono');
+  await expect(page.getByRole('heading',{name:'Check your inputs',exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Export report',exact:true})).toBeDisabled();
+  await page.getByLabel('Roof shape',{exact:true}).selectOption('gable');
+  await expect(page.getByRole('button',{name:'Export report',exact:true})).toBeEnabled();
+  await page.setViewportSize({width:390,height:844});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await expect(page.locator('.longitudinal-calcs')).toBeVisible();
+});
