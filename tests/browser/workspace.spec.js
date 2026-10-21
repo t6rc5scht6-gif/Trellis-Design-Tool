@@ -96,7 +96,7 @@ test('hand calculation sheet shows arithmetic, code references and common-base e
 });
 
 test('governing combinations are emphasized and can filter/open concurrent post reactions',async({page})=>{
-  const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('/');
+  const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('/');await page.getByLabel('Show detailed signed cases',{exact:true}).check();
   await expect(page.getByRole('region',{name:'LRFD governing combinations'})).toBeVisible();
   await page.getByRole('button',{name:'Inspect governing moment',exact:true}).click();
   await expect(page.getByLabel('Worked combination')).toHaveValue('1.2D + Ev + ρ(EX+ + 0.3EY+)');
@@ -116,7 +116,7 @@ test('governing combinations are emphasized and can filter/open concurrent post 
   await expect(page.getByRole('button',{name:'1.4D',exact:true})).toBeVisible();expect(errors).toEqual([]);
 });
 test('saved version 1 projects recalculate with all eight 100/30 design patterns',async({page})=>{
-  await page.goto('/');await page.getByRole('tab',{name:'Hand calculations',exact:true}).click();
+  await page.goto('/');await page.getByLabel('Show detailed signed cases',{exact:true}).check();await page.getByRole('tab',{name:'Hand calculations',exact:true}).click();
   await page.getByLabel('Load basis',{exact:true}).selectOption('Basic');
   await page.getByLabel('Worked combination').selectOption('0.3EX− + EY+');
   await expect(page.locator('.directional-table tbody tr.selected-row')).toHaveCount(1);
@@ -264,4 +264,38 @@ test('invalid overhang geometry blocks exports and legacy projects import with z
   await expect(page.getByRole('status')).toContainText('Project imported and recalculated');
   await expect(page.getByLabel('Overhang · X start',{exact:true})).toHaveValue('0');await expect(page.locator('.metric-card').first().locator('strong')).toHaveText('480ft²');
   await page.getByLabel('Overhang · X start',{exact:true}).fill('60');await expect(page.getByText(/Roof overhang extends to or below ground/).first()).toBeVisible();await expect(page.getByRole('button',{name:'Export report',exact:true})).toBeDisabled();
+});
+
+test('compact seismic view shows the requested Vx squared plus 0.30 Vx squared check',async({page})=>{
+ await page.goto('/');await expect(page.getByLabel('Show detailed signed cases',{exact:true})).not.toBeChecked();
+ await expect(page.locator('.seismic-resultant .calc-formula')).toHaveText('Vcombined = √[Vx² + (0.30 Vx)²] = 1.044 Vx');
+ await expect(page.locator('.seismic-resultant .calc-row')).toHaveCount(1);await expect(page.locator('.directional-table')).toHaveCount(0);
+ const before=await page.getByLabel('Worked combination',{exact:true}).locator('option').count();
+ const labels=await page.getByLabel('Worked combination',{exact:true}).locator('option').allTextContents();expect(labels.every(v=>!v.includes('EX−')&&!v.includes('WX−'))).toBe(true);
+ await page.getByLabel('Show detailed signed cases',{exact:true}).check();
+ expect(await page.getByLabel('Worked combination',{exact:true}).locator('option').count()).toBeGreaterThan(before);await expect(page.locator('.directional-table tbody tr')).toHaveCount(8);
+ await page.getByLabel('Show detailed signed cases',{exact:true}).uncheck();await page.getByLabel('Compact governing demand',{exact:true}).selectOption('shear');await expect(page.locator('.directional-table')).toHaveCount(0);
+});
+test('Chapter 27 auto monoslope wind recalculates pressure patterns and additional forces without manual duplication',async({page})=>{
+ const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('/');
+ await page.getByRole('button',{name:'Wind & C&C 03',exact:true}).click();await page.getByLabel('MWFRS wind procedure',{exact:true}).selectOption('asce-27');
+ await expect(page.getByRole('heading',{name:'Check your inputs',exact:true})).toBeVisible();await expect(page.getByText(/Supply Figure 27.3-5/).first()).toBeVisible();
+ await page.getByRole('button',{name:'Geometry 01',exact:true}).click();await page.getByLabel('Roof shape',{exact:true}).selectOption('mono');
+ await expect(page.locator('.chapter27-calcs')).toContainText('pcode = qh Kd G CN');await expect(page.getByRole('button',{name:'Export report',exact:true})).toBeEnabled();
+ await page.getByRole('button',{name:'Wind & C&C 03',exact:true}).click();await expect(page.getByLabel('GCf · X',{exact:true})).toHaveCount(0);
+ await page.getByLabel('MWFRS blockage',{exact:true}).fill('51');await expect(page.locator('.chapter27-calcs')).toContainText('obstructed');
+ await page.getByLabel('Additional horizontal force · Y',{exact:true}).fill('1000');
+ const stored=JSON.parse(await page.evaluate(()=>localStorage.getItem('trellis-project-v1')));expect(stored.wind.additionalY).toBe(1000);
+ await page.getByText('Coefficient lookup and pressure patterns',{exact:true}).click();await expect(page.locator('.chapter27-source-table tbody tr')).toHaveCount(20);
+ await page.reload();await expect(page.locator('.chapter27-calcs')).toContainText('Y = 1.000 kip');expect(errors).toEqual([]);
+});
+test('MPBZ collects ASD demands and entered component ratios while overall catalog DCR stays pending',async({page})=>{
+ const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('/');await page.getByRole('button',{name:'Simpson MPBZ 07',exact:true}).click();
+ await page.getByRole('tab',{name:'MPBZ capacity',exact:true}).click();await expect(page.locator('.mpbz-ratios tbody tr')).toHaveCount(7);await expect(page.locator('.mpbz-check')).toContainText('Overall MPBZ catalog DCR: pending.');
+ await page.getByLabel('MPBZ model',{exact:true}).fill('Project model awaiting sheet');await page.getByText('Enter catalog ASD allowable capacities for component screening',{exact:true}).click();
+ await page.getByLabel('MPBZ allowable · Shear X',{exact:true}).fill('1');
+ const row=page.locator('.mpbz-ratios tbody tr').filter({has:page.getByRole('cell',{name:'Shear X',exact:true})});await expect(row.locator('td').nth(3)).toHaveText('0.544');
+ await expect(page.locator('.mpbz-check')).toContainText('Overall MPBZ catalog DCR: pending.');await expect(page.locator('.mpbz-check')).toContainText('component screening checks');
+ await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+ await page.reload();await page.getByRole('tab',{name:'MPBZ capacity',exact:true}).click();await expect(page.locator('.mpbz-check')).toContainText('Project model awaiting sheet');expect(errors).toEqual([]);
 });

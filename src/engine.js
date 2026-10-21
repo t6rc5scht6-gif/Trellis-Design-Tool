@@ -1,3 +1,4 @@
+import { isChapter27, deriveChapter27, chapter27RoofForce } from './chapter27.js';
 import { OVERHANG_KEYS, overhangs, roofPlan, roofHeightAt, overhangPatches, patchMoment, gravityOverhangMoment } from './roofGeometry.js';
 import { deriveLongitudinalWind, isEnvelopeLongitudinal, longitudinalPostShare } from './longitudinalWind.js';
 import { deriveCc, isAutomaticCc } from './windTables.js';
@@ -8,7 +9,7 @@ export const DEFAULT_PROJECT = {
   code: '2025 CBC / ASCE 7-22', risk: 'II', roof: 'gable', width: 20, length: 24, height: 10, slope: 2,
   overhangs: {xStart:0,xEnd:0,yStart:0,yEnd:0},
   xPosts: '0, 10, 20', yPosts: '0, 12, 24', dead: 12, live: 20, distribution: 'tributary',
-  wind: { speed: 93, kz: 0.85, kzt: 1, kd: 0.85, ke: 1, exposure: 'C',
+  wind: { mwfrsSource:'manual',mwfrsBlockage:0,mwfrsGust:.85,additionalX:0,additionalY:0,mwfrsReviewed:false, speed: 93, kz: 0.85, kzt: 1, kd: 0.85, ke: 1, exposure: 'C',
     cfX: 1.3, cfY: 1.3, areaX: 60, areaY: 50,
     longitudinalSource: 'manual', longitudinalCoefficientMode: 'edge-envelope', windwardEndEdgeArea: '', leewardEndEdgeArea: '', endSolidArea: 0, longitudinalGcWindward: '', longitudinalGcLeeward: '', longitudinalCoefficientReference: '', longitudinalReviewed: false, roofX1: 0.9, roofX2: 0.9, roofY1: 0.7, roofY2: 0.7,
     roofX1Down: -0.6, roofX2Down: -0.6, roofY1Down: -0.5, roofY2Down: -0.5,
@@ -54,6 +55,11 @@ export function validate(p) {
   positive(p.slope,'Roof rise',true); if (p.slope > 12) fail('Roof slope must be between 0:12 and 12:12.');
   for (const k of ['dead','live']) positive(p[k],k,true);
   coordinates(p.xPosts,p.width,'X post coordinates'); coordinates(p.yPosts,p.length,'Y post coordinates');
+  if(p.mpbz!==undefined){
+    if(!p.mpbz||typeof p.mpbz!=='object'||Array.isArray(p.mpbz))fail('MPBZ capacity inputs must be an object.');
+    for(const k of ['model','source'])if(p.mpbz[k]!==undefined&&typeof p.mpbz[k]!=='string')fail('MPBZ model and catalog source must be text.');
+    for(const k of ['compression','uplift','vx','vy','mx','my','mz'])if(p.mpbz[k]!==undefined&&p.mpbz[k]!=='')positive(p.mpbz[k],`MPBZ allowable ${k}`,true);
+  }
   const w = p.wind, s = p.seismic;
   if (!w || !s) fail('Wind and seismic inputs are required.');
   if (typeof w.reviewed !== 'boolean' || typeof s.reviewed !== 'boolean' || typeof w.uniformRoof !== 'boolean') fail('Review and roof-pattern flags must be boolean.');
@@ -61,8 +67,10 @@ export function validate(p) {
   if (!['B','C','D'].includes(w.exposure)) fail('Choose a valid exposure.');
   for (const k of ['speed','kz','kzt','kd','ke','ccArea','ccEffectiveArea']) positive(w[k],`Wind ${k}`);
   if (!['manual','asce-28.3.7'].includes(w.longitudinalSource??'manual')) fail('Choose a supported longitudinal wind source.');
-  for (const k of (isEnvelopeLongitudinal(p)?['cfX','areaX']:['cfX','cfY','areaX','areaY'])) positive(w[k],`Wind ${k}`,true);
-  for (const k of ['roofX1','roofX2','roofY1','roofY2']) { positive(w[k],`Uplift ${k}`,true); if(!Number.isFinite(w[k+'Down'])||w[k+'Down']>0)fail(`Downward ${k} must be finite and nonpositive.`); }
+  for (const k of (isChapter27(p)?[]:isEnvelopeLongitudinal(p)?['cfX','areaX']:['cfX','cfY','areaX','areaY'])) positive(w[k],`Wind ${k}`,true);
+  if(w.mwfrsReviewed!==undefined&&typeof w.mwfrsReviewed!=='boolean')fail('MWFRS review flag must be boolean.');
+  if(!['manual','asce-27'].includes(w.mwfrsSource??'manual'))fail('Choose a supported MWFRS source.');
+  if(!isChapter27(p))for (const k of ['roofX1','roofX2','roofY1','roofY2']) { positive(w[k],`Uplift ${k}`,true); if(!Number.isFinite(w[k+'Down'])||w[k+'Down']>0)fail(`Downward ${k} must be finite and nonpositive.`); }
   if (!['manual','asce-30.5'].includes(w.ccSource??'manual')) fail('Choose a supported C&C coefficient source.');
   if (!Array.isArray(w.cc) || w.cc.length !== 3) fail('Three C&C regions are required.');
   for (const zone of w.cc) {
@@ -116,9 +124,9 @@ export function orthogonalSeismicPatterns(){
   }
   return patterns;
 }
-export function combinations(p) {
+export function combinations(p,windCases=WIND_CASES) {
   const a=[{name:'D',family:'Basic',factors:{D:1}},{name:'Lr',family:'Basic',factors:{Lr:1}}];
-  const winds=WIND_CASES,axes=['EX+','EX−','EY+','EY−'],patterns=orthogonalSeismicPatterns();
+  const winds=windCases,axes=['EX+','EX−','EY+','EY−'],patterns=orthogonalSeismicPatterns();
   for(const w of winds)a.push({name:w,family:'Basic',factors:{[w]:1}});
   // Keep single-axis cases as basic references. Design E cases use all eight 100/30 patterns.
   for(const e of axes)a.push({name:e,family:'Basic',factors:{[e]:1}});
@@ -164,7 +172,7 @@ export function roofForce(p,post,axis,sign,down,q){
 export function analyze(p){
   validate(p);const model=geometry(p),q=velocityPressure(p.wind,p.code),windPressure=q*(directionalityInQ(p)?1:p.wind.kd),weight=(p.dead+p.live*p.seismic.liveFraction)*model.area;
   const seismicResult=seismicCoefficient(p.seismic),cs=seismicResult.cs,baseShear=cs*weight;
-  const longitudinal=deriveLongitudinalWind(p,q,model.ys.length);
+  const chapter27=deriveChapter27(p,q),longitudinal=deriveLongitudinalWind(p,q,model.ys.length);
   const basic={},windForces={},postCalcs=model.posts.map(post=>({...post,share:p.distribution==='equal'?1/model.posts.length:post.area/model.area,dead:p.dead*post.area,live:p.live*post.area,deadMoments:gravityOverhangMoment(post,p.dead),liveMoments:gravityOverhangMoment(post,p.live)}));
   const makeCase=(name,forces,details={})=>{
     const reactions=forces.map(([fx,fy,fz],i)=>{
@@ -176,7 +184,7 @@ export function analyze(p){
   };
   makeCase('D',postCalcs.map(post=>[0,0,-post.dead]),{posts:postCalcs.map(post=>({appliedMoments:post.deadMoments}))});
   makeCase('Lr',postCalcs.map(post=>[0,0,-post.live]),{posts:postCalcs.map(post=>({appliedMoments:post.liveMoments}))});
-  for(const axis of ['X','Y'])for(const sign of [1,-1])for(const down of [false,true]){
+  if(!chapter27)for(const axis of ['X','Y'])for(const sign of [1,-1])for(const down of [false,true]){
     const name=`W${axis}${sign>0?'+':'−'}${down?'↓':''}`,H=axis==='Y'&&longitudinal?longitudinal.force:windPressure*p.wind[`cf${axis}`]*p.wind[`area${axis}`],details=[];
     const forces=postCalcs.map(post=>{
       const roof=roofForce(p,post,axis,sign,down,windPressure),f=[...roof.force],share=axis==='Y'&&longitudinal?longitudinalPostShare(p,post):post.share,horizontal=sign*H*share;
@@ -185,11 +193,19 @@ export function analyze(p){
     });
     makeCase(name,forces,{posts:details,referenceForce:H,down,longitudinal:axis==='Y'&&!!longitudinal});windForces[name]=basic[name].totalLoad;
   }
+  if(chapter27)for(const pattern of chapter27.patterns){
+    const details=[],H=p.wind[`additional${pattern.axis}`]??0;
+    const forces=postCalcs.map(post=>{
+      const roof=chapter27RoofForce(p,post,pattern,chapter27),f=[...roof.force],horizontal=pattern.sign*H*post.share;
+      f[pattern.axis==='X'?0:1]+=horizontal;details.push({horizontal,roof,share:post.share,horizontalHeight:post.pos[2],appliedMoments:roof.overhangMoments});return f;
+    });
+    makeCase(pattern.name,forces,{posts:details,referenceForce:H,pattern});windForces[pattern.name]=basic[pattern.name].totalLoad;
+  }
   for(const axis of ['X','Y'])for(const sign of [1,-1])makeCase(`E${axis}${sign>0?'+':'−'}`,postCalcs.map(post=>axis==='X'?[sign*baseShear*post.share,0,0]:[0,sign*baseShear*post.share,0]));
-  const cases=combinations(p).map(c=>({...c,reactions:model.posts.map((_,i)=>Array.from({length:6},(_,j)=>Object.entries(c.factors).reduce((s,[key,factor])=>s+basic[key].reactions[i][j]*factor,0))),totalLoad:[0,1,2].map(j=>Object.entries(c.factors).reduce((s,[key,factor])=>s+basic[key].totalLoad[j]*factor,0))}));
+  const cases=combinations(p,chapter27?chapter27.patterns.map(v=>v.name):WIND_CASES).map(c=>({...c,reactions:model.posts.map((_,i)=>Array.from({length:6},(_,j)=>Object.entries(c.factors).reduce((s,[key,factor])=>s+basic[key].reactions[i][j]*factor,0))),totalLoad:[0,1,2].map(j=>Object.entries(c.factors).reduce((s,[key,factor])=>s+basic[key].totalLoad[j]*factor,0))}));
   const ccResult=deriveCc(p,q),cc=ccResult.zones;
   const forceAccountingError=Math.max(Math.abs(postCalcs.reduce((s,v)=>s+v.area,0)-model.area),Math.abs(basic['EX+'].totalLoad[0]-baseShear));
-  return {model,basic,cases,q,windPressure,weight,cs,baseShear,seismicResult,cc,ccResult,longitudinal,windForces,postCalcs,forceAccountingError};
+  return {model,basic,cases,workedWindName:chapter27?chapter27.patterns[0].name:'WX+',chapter27,q,windPressure,weight,cs,baseShear,seismicResult,cc,ccResult,longitudinal,windForces,postCalcs,forceAccountingError};
 }
 export function envelope(result,family) {
   const cases=result.cases.filter(c=>c.family===family);
@@ -222,7 +238,8 @@ export function governingPostMetrics(caseInfo,post){
   return caseInfo?caseInfo.metrics.filter(key=>caseInfo.posts[key].includes(post)):[];
 }
 export function warnings(p){return [
-  ...(!p.wind.reviewed?[isEnvelopeLongitudinal(p)?'Transverse and roof MWFRS wind coefficients/reference areas remain manual and require project-specific code selection.':isAutomaticCc(p)?'MWFRS wind coefficients and reference areas remain manual and require project-specific code selection.':'Wind coefficients and reference areas are illustrative and require project-specific code selection.']:[]),
+  ...(isChapter27(p)?['Chapter 27 roof wind uses the supplied monoslope and along-wind figures, with every A/B pressure pattern retained. Additional exposed fascia/post/end-wall horizontal forces are separate entered loads. Gable Figure 27.3-5 and §27.3.3 longitudinal equations have not been supplied.']:[]),
+  ...(!p.wind.reviewed&&!isChapter27(p)?[isEnvelopeLongitudinal(p)?'Transverse and roof MWFRS wind coefficients/reference areas remain manual and require project-specific code selection.':isAutomaticCc(p)?'MWFRS wind coefficients and reference areas remain manual and require project-specific code selection.':'Wind coefficients and reference areas are illustrative and require project-specific code selection.']:[]),
   ...(isEnvelopeLongitudinal(p)?['§28.3.7 supplies longitudinal ±Y force only. Verify Chapter 28 eligibility, Figure 28.3-1 Load Case 2 area-averaged coefficients, transverse-frame configuration, and the longitudinal sidewall load path. The referenced Chapter 27 roof pressures and transverse wind remain separate project inputs. Figure 28.3-1 supplies the Case 2 end-wall coefficients; the chosen averaging/envelope assumption is reported.']:[]),
   ...(isEnvelopeLongitudinal(p)&&!p.wind.longitudinalReviewed?['Longitudinal envelope inputs/load path are not marked reviewed. The hand model splits F equally to the two outer sidewalls and assigns it along each sidewall by tributary length. Base design moments conservatively use max(post-top height, end-wall centroid height).']:[]),
   ...(isAutomaticCc(p)&&!p.wind.ccPressureReviewed?['C&C CN values are derived from the supplied figures. Pressure uses ASCE 7-22 Eq. (30.5-1), p = qh Kd G CN. Confirm the entered G and minimum-pressure floor; the 16 psf starting floor is a project input, not derived from these figures.']:[]),
@@ -231,7 +248,7 @@ export function warnings(p){return [
   ...(p.seismic.site==='Default'?['The hazard report uses Default soil class. Confirm site class and the applicable spectrum procedure.']:[]),
   ...(p.code.includes('7-16')&&p.hazard?.source?.includes('7-22')?['The ASCE 7-22 hazard report does not match the selected ASCE 7-16 edition.']:[]),
   `Independent cantilever posts; roof gravity and roof-normal wind loads use geometric tributary areas. ${isEnvelopeLongitudinal(p)?'Transverse wind and seismic use':'Horizontal reference wind and seismic use'} ${p.distribution==='equal'?'equal load per post':'tributary area fractions'}${isEnvelopeLongitudinal(p)?'; §28.3.7 longitudinal wind uses the two outer sidewalls and their tributary lengths':''}. This is an assigned load path, not a stiffness redistribution or a universal conservative bound.`,
-  ...(p.wind.uniformRoof?['For each direction and sign, apply the governing net roof coefficient uniformly. This envelopes the entered local pressures but does not replace checking all required code wind patterns.']:[]),
+  ...(!isChapter27(p)&&p.wind.uniformRoof?['For each direction and sign, apply the governing net roof coefficient uniformly. This envelopes the entered local pressures but does not replace checking all required code wind patterns.']:[]),
   'Inboard roof-load eccentric moments, diaphragm torsion, accidental torsion, P–Δ, overstrength/anchorage, and member/connection/foundation capacity are outside this hand-calculation scope.',
   ...(roofPlan(p).hasOverhang?['Overhangs cantilever from adjacent outer post lines. Gravity and roof-normal wind cantilever moments are transferred to the edge posts and added to Hh; roof slope/end overhangs can produce Mz. Verify the roof-to-column moment connection and framing capacity. Inboard roof-load transfer eccentricities remain excluded. Manual wind areas/coefficients must be reviewed for the enlarged roof.']:[]),
   'Seismic design combinations include all eight signed 100%/30% orthogonal patterns. This implements directional force effects; member/foundation strength and drift acceptance checks remain outside the app.',

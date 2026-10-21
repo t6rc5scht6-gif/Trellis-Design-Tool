@@ -79,6 +79,34 @@ The result tab and printable hand sheet show source figure, θ, h, both h/L rati
 
 C&C results remain local component demands; they do not modify or add to MWFRS post reactions. Manual mode preserves entered net coefficients and applies no extra gust factor.
 
+## Compact seismic and combination presentation
+
+The default hand sheet uses the user's requested single post check because this model assigns equal directional seismic shears:
+
+```text
+Vcombined = sqrt(Vx^2 + (0.30 Vx)^2) = sqrt(1.09) Vx = 1.044 Vx
+```
+
+The 30% factor multiplies the force **before** squaring. Arithmetic uses the exact square root; 1.044 is the displayed rounded factor. ASD horizontal effects receive 0.7ρ and LRFD effects receive ρ; Ev enters the full combination once. If unequal X/Y shears are introduced later, the helper retains both primary-axis formulas and selects their maximum.
+
+**Show detailed signed cases** is off initially. The compact selectors and combination list group repeated signed wind/seismic cases, and Chapter 27 A/B directions, under one combination label. **Show governing direction for** chooses compression, uplift, shear, bending moment or torsion. Each group displays the actual concurrent case maximizing that criterion for the selected post (or across posts in the combination list). The other concurrent source cases remain available through the detailed view; governing summary cards still search all cases. This preserves directions that add to applied overhang moments. It does not substitute a set of unrelated component maxima for a concurrent force set. The printable report collapses its full signed case appendix by default; CSV retains all source cases.
+
+## Chapter 27 MWFRS roof wind
+
+In **Wind & C&C → MWFRS wind procedure**, select **Chapter 27 · auto monoslope roof forces**. This opt-in uses the supplied ASCE 7-22 §27.3.2 pressure equation `p = qh Kd G CN`, Figure 27.3-4 for cross-roof monoslope wind and Figure 27.3-7 for wind along the roof. It supports flat/monoslope roofs at 0°–45°, with the Figure 27.3-4 limit `0.25 ≤ h/LX ≤ 1.00`. The low h/L alternate procedure is not inferred. **Automatic gable coefficients await Figure 27.3-5; the extra longitudinal-force equations of §27.3.3 also remain pending.** The earlier optional §28.3.7 branch remains in manual wind mode for eligible gables.
+
+The source table supplies CN, so G is explicit and enters once. Code positive pressure acts toward the top surface; the app converts to its uplift-positive convention. Figure 27.3-4 uses the printed `< 7.5°` row without interpolation to the 7.5° row; linear interpolation is permitted only over the supplied 7.5°–45° rows. Flow is clear at blockage ≤ 50%, obstructed above 50%. The roof rises in +X, so figure γ = 0° (high-edge wind) maps to −X; γ = 180° maps to +X.
+
+Every A/B pattern is integrated by its pressure regions rather than replacing mixed signs with uniform uplift/downward coefficients. For along-roof wind, regions extend from the actual windward roof edge through distances ≤ h, h–2h and > 2h, truncated at the opposite edge. Roof-normal components are `Fz = papp At` and `Fx = −papp slope At`; the slope component is X-directed even for Y wind. Roof overhang areas and cantilever moments are included. Automatic mode replaces the old manual roof/reference loads, so they are not added twice. Gravity, seismic, and C&C remain separate.
+
+**Additional horizontal force · X/Y** are separate nonnegative force inputs in pounds for exposed columns, fascia, or other applicable surfaces. Zero starts the input and requires justification; these roof figures do not derive those surface forces. Kz and G require project review at the displayed actual roof height. The source coefficients, region pressures, geometry, and governing post wind effects are recorded in the hand sheet/report. Chapter 27 source patterns feed the existing service, ASD and LRFD combination factors.
+
+## Simpson MPBZ capacity check — catalog source pending
+
+**Simpson MPBZ** inputs and the **MPBZ capacity** result tab collect the exact model/source and applicable entered catalog ASD allowable loads. The result searches every post and **ASD** combination for compression, uplift, Vx, Vy, Mx, My and torsion, preserving the governing concurrent source set. Entered forces use kip and moments kip-ft; an individual component ratio is demand / entered allowable. Zero or missing capacity stays pending. No catalog capacity has been invented, no LRFD demands are compared with ASD allowables, and no extra wind factor is applied to the catalog check.
+
+**The requested overall MPBZ catalog DCR is not yet implemented:** the Simpson sheet must establish the exact model, wood/fastener/concrete/installation conditions, available capacities, and combined-load/biaxial interaction equation. Passing individual component ratios does not establish that combined-load check. The UI/report always identify the overall result as pending, including when entered individual capacities are adequate. The source sheet is needed to finish and validate the manufacturer-specific acceptance calculation.
+
 ## Roof overhangs
 
 **Geometry → Roof overhangs** provides four independent distances, **X start**, **X end**, **Y start**, **Y end**, in feet of horizontal projection. Width/length and coordinates continue to describe the outside post lines (`0…width`, `0…length`). Zero is the default; older version 1 project files without overhang fields behave identically. The roof slope extends through the overhangs, with the ridge and support heights unchanged. The eave-height input is at the X = 0 support line; roof-edge elevations are calculated. Roof edges at/below ground and overall roof dimensions above 300 ft are rejected.
@@ -139,7 +167,7 @@ This force replaces the previous manual Y reference force and enters both signed
 
 This is an engineering review tool, not automatic CBC/ASCE compliance certification. The user-specified R is recorded rather than verified against a material/system table. Code selection does not automatically supply aerodynamic tables, spectrum ordinates, period limits, system eligibility, or jurisdictional amendments.
 
-The Chapter 2 combination set is reduced to D, Lr, W, and E. Service cases are explicitly unfactored diagnostic studies; ASD applies 0.6 to ultimate wind. Snow, rain/ponding, ice, floor live load, thermal actions, equipment, and other applicable loads need separate treatment. This version implements the 100%/30% directional force-effect combinations, but does not implement accidental torsion, overstrength/anchorage combinations, capacity design, uplift-dependent support behavior, inboard roof-load eccentric transfer moments, diaphragm torsion, P–Delta, member strength, connection/anchor design, foundations, soil flexibility, or roof diaphragm design. Automatic Kz lookup, automatic transverse/roof MWFRS coefficient selection, automatic period estimation, and numeric multi-period spectrum retrieval are not implemented.
+The Chapter 2 combination set is reduced to D, Lr, W, and E. Service cases are explicitly unfactored diagnostic studies; ASD applies 0.6 to ultimate wind. Snow, rain/ponding, ice, floor live load, thermal actions, equipment, and other applicable loads need separate treatment. This version implements the 100%/30% directional force-effect combinations, but does not implement accidental torsion, overstrength/anchorage combinations, capacity design, uplift-dependent support behavior, inboard roof-load eccentric transfer moments, diaphragm torsion, P–Delta, member strength, connection/anchor design, foundations, soil flexibility, or roof diaphragm design. Automatic Kz lookup, automatic gable/transverse MWFRS coefficients beyond the supplied Chapter 27 monoslope figures, automatic period estimation, and numeric multi-period spectrum retrieval are not implemented.
 
 ## Validation
 

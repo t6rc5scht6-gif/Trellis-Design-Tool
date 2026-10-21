@@ -1,5 +1,5 @@
 import { roofAngle } from './windTables.js';
-export const isEnvelopeLongitudinal=p=>p.wind.longitudinalSource==='asce-28.3.7';
+export const isEnvelopeLongitudinal=p=>p.wind.longitudinalSource==='asce-28.3.7'&&p.wind.mwfrsSource!=='asce-27';
 const finite=(value,label,allowZero=false)=>{if(!Number.isFinite(value)||(allowZero?value<0:value<=0))throw new Error(`${label} must be ${allowZero?'nonnegative':'positive'} and finite.`);};
 export const CASE_2_END_WALL={windward:0.40,windwardE:0.61,leeward:-0.29,leewardE:-0.43};
 export function endWallAverages(p,Ae){
