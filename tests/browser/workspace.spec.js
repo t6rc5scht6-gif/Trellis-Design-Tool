@@ -217,3 +217,51 @@ test('longitudinal method blocks unsupported roof geometry and remains usable on
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await expect(page.locator('.longitudinal-calcs')).toBeVisible();
 });
+
+test('four roof overhangs update geometry, cantilever moments, governing torsion and saved exports',async({page})=>{
+  const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('/');
+  await page.getByLabel('Roof shape',{exact:true}).selectOption('flat');
+  await page.getByLabel('X post coordinates',{exact:true}).fill('0, 20');await page.getByLabel('Y post coordinates',{exact:true}).fill('0, 24');
+  for(const [label,value] of [['X start','1'],['X end','2'],['Y start','3'],['Y end','4']])await page.getByLabel(`Overhang · ${label}`,{exact:true}).fill(value);
+  await expect(page.getByText('4 cantilever columns',{exact:true})).toBeVisible();
+  await expect(page.locator('.metric-card').first().locator('strong')).toHaveText('713ft²');
+  await expect(page.locator('.structure-svg [data-overhang="true"]')).not.toHaveCount(0);
+  await expect(page.getByLabel('X post coordinates',{exact:true})).toHaveValue('0, 20');
+  await page.getByLabel('Worked post',{exact:true}).selectOption('P01');
+  await page.getByLabel('Load basis',{exact:true}).selectOption('Basic');await page.getByLabel('Worked combination',{exact:true}).selectOption('D');
+  await expect(page.locator('.overhang-calcs')).toContainText('0.594 kip-ft');await expect(page.locator('.overhang-calcs')).toContainText('−0.090 kip-ft'.replace('−','-'));
+  await page.getByRole('tab',{name:'Post reactions',exact:true}).click();
+  const row=page.locator('tr.selected-row');await expect(row.locator('td').nth(1)).toHaveText('1.980');await expect(row.locator('td').nth(4)).toHaveText('0.594');await expect(row.locator('td').nth(5)).toHaveText('-0.090');
+  await page.getByLabel('Roof shape',{exact:true}).selectOption('mono');await page.getByLabel('Roof slope',{exact:true}).fill('3');
+  await expect(page.getByRole('button',{name:'Inspect governing torsion',exact:true})).toBeVisible();await page.getByRole('button',{name:'Inspect governing torsion',exact:true}).click();
+  await expect(page.locator('.table-caption .governing-badge')).toContainText('torsion');
+  await page.reload();await expect(page.getByLabel('Overhang · Y end',{exact:true})).toHaveValue('4');
+  const saved=page.waitForEvent('download');await page.getByRole('button',{name:'Save project',exact:true}).click();
+  const stream=await (await saved).createReadStream(),chunks=[];for await(const chunk of stream)chunks.push(chunk);
+  expect(JSON.parse(Buffer.concat(chunks).toString()).overhangs).toEqual({xStart:1,xEnd:2,yStart:3,yEnd:4});
+  const printed=page.waitForEvent('download');await page.getByRole('button',{name:'Export report',exact:true}).click();
+  const reportStream=await (await printed).createReadStream(),reportChunks=[];for await(const chunk of reportStream)reportChunks.push(chunk);
+  const html=Buffer.concat(reportChunks).toString();expect(html).toContain('Roof overhangs — applied cantilever moments');expect(html).toContain('233.000 ft²');expect(html).toContain('GOVERNS TORSION');
+  expect(errors).toEqual([]);
+});
+test('overhang changes invalidate review, update automatic C&C dimensions and fit mobile',async({page})=>{
+  await page.goto('/');await page.getByRole('button',{name:'Wind & C&C 03',exact:true}).click();
+  await page.getByLabel('Longitudinal wind method',{exact:true}).selectOption('asce-28.3.7');
+  await page.getByLabel('C&C coefficient source',{exact:true}).selectOption('asce-30.5');
+  await page.getByLabel('I verified the gust factor, entered pressure floor, figure applicability, and component zone.').check();
+  await page.getByLabel('I verified Chapter 28 eligibility, transverse frames, coefficient averages, end-wall solidity, and longitudinal sidewall load path.').check();
+  await page.getByRole('button',{name:'Geometry 01',exact:true}).click();await page.getByLabel('Overhang · X end',{exact:true}).fill('2');
+  const p=JSON.parse(await page.evaluate(()=>localStorage.getItem('trellis-project-v1')));expect(p.wind.ccPressureReviewed).toBe(false);expect(p.wind.longitudinalReviewed).toBe(false);expect(p.seismic.reviewed).toBe(false);
+  await page.getByRole('tab',{name:'Components & cladding',exact:true}).click();await expect(page.locator('.cc-basis-text').first()).toContainText('h/LX = 0.455');
+  await page.getByRole('tab',{name:'Hand calculations',exact:true}).click();await page.getByLabel('Worked post',{exact:true}).selectOption('P03');
+  await page.setViewportSize({width:390,height:844});await expect(page.locator('.overhang-calcs')).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+});
+test('invalid overhang geometry blocks exports and legacy projects import with zero overhangs',async({page})=>{
+  await page.goto('/');const legacy=JSON.parse(await page.evaluate(()=>localStorage.getItem('trellis-project-v1')));delete legacy.overhangs;
+  await page.getByLabel('Overhang · X start',{exact:true}).fill('-1');await expect(page.getByRole('heading',{name:'Check your inputs',exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'Export report',exact:true})).toBeDisabled();
+  await page.getByLabel('Import project JSON').setInputFiles({name:'legacy.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(legacy))});
+  await expect(page.getByRole('status')).toContainText('Project imported and recalculated');
+  await expect(page.getByLabel('Overhang · X start',{exact:true})).toHaveValue('0');await expect(page.locator('.metric-card').first().locator('strong')).toHaveText('480ft²');
+  await page.getByLabel('Overhang · X start',{exact:true}).fill('60');await expect(page.getByText(/Roof overhang extends to or below ground/).first()).toBeVisible();await expect(page.getByRole('button',{name:'Export report',exact:true})).toBeDisabled();
+});

@@ -46,5 +46,5 @@ export function deriveLongitudinalWind(p,qh,actualFrames){
 }
 export function longitudinalPostShare(p,post){
   const onSidewall=Math.abs(post.pos[0])<1e-8||Math.abs(post.pos[0]-p.width)<1e-8;
-  return onSidewall?0.5*post.ty/p.length:0;
+  return onSidewall?0.5*(post.coreTy??post.ty)/p.length:0;
 }

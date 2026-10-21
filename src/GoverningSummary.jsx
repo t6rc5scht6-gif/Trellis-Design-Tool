@@ -10,7 +10,7 @@ export default function GoverningSummary({result,family,onPick}){
     <div className="governing-summary-title"><Flag size={15}/><strong>Governing combinations</strong><span>{family} · maxima across all posts</span></div>
     <div className="governing-summary-grid">{governingBases(result,family).map(g=>
       <button key={g.key} className={g.active?'':'inactive'} disabled={!g.active} onClick={()=>onPick(g)} aria-label={`Inspect governing ${g.key}`}>
-        <span>{DEMAND_LABELS[g.key]}</span><strong>{(g[g.key]/1000).toLocaleString('en-US',{minimumFractionDigits:3,maximumFractionDigits:3})}<small>{g.key==='moment'?'kip-ft':'kip'}</small></strong>
+        <span>{DEMAND_LABELS[g.key]}</span><strong>{(g[g.key]/1000).toLocaleString('en-US',{minimumFractionDigits:3,maximumFractionDigits:3})}<small>{['moment','torsion'].includes(g.key)?'kip-ft':'kip'}</small></strong>
         <b>{g.active?g.case:`No ${g.key} demand`}</b><small>{g.active?`${g.post} · ${g.ties.length} tied post/case set${g.ties.length===1?'':'s'}`:'Not marked as governing'}</small>
       </button>
     )}</div>

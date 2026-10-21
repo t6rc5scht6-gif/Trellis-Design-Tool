@@ -1,3 +1,4 @@
+import { OVERHANG_KEYS, overhangs, roofPlan, roofHeightAt, overhangPatches, patchMoment, gravityOverhangMoment } from './roofGeometry.js';
 import { deriveLongitudinalWind, isEnvelopeLongitudinal, longitudinalPostShare } from './longitudinalWind.js';
 import { deriveCc, isAutomaticCc } from './windTables.js';
 // Direct hand calculations for independent fixed-base cantilever columns.
@@ -5,6 +6,7 @@ import { deriveCc, isAutomaticCc } from './windTables.js';
 export const DEFAULT_PROJECT = {
   version: 1, name: 'Davis canopy', address: '28193 Mace Blvd, Davis, CA 95618',
   code: '2025 CBC / ASCE 7-22', risk: 'II', roof: 'gable', width: 20, length: 24, height: 10, slope: 2,
+  overhangs: {xStart:0,xEnd:0,yStart:0,yEnd:0},
   xPosts: '0, 10, 20', yPosts: '0, 12, 24', dead: 12, live: 20, distribution: 'tributary',
   wind: { speed: 93, kz: 0.85, kzt: 1, kd: 0.85, ke: 1, exposure: 'C',
     cfX: 1.3, cfY: 1.3, areaX: 60, areaY: 50,
@@ -44,6 +46,11 @@ export function validate(p) {
   }
   if (!['flat','mono','gable'].includes(p.roof)) fail('Choose a supported roof shape.');
   for (const key of ['width','length','height']) { positive(p[key],key); if (p[key] > 300) fail(`${key} exceeds this model’s 300 ft input limit.`); }
+  if(p.overhangs!==undefined&&(!p.overhangs||typeof p.overhangs!=='object'||Array.isArray(p.overhangs)))fail('Roof overhangs must contain four numeric distances.');
+  for(const k of OVERHANG_KEYS)positive(overhangs(p)[k],`Roof overhang ${k}`,true);
+  const plan=roofPlan(p);
+  if(plan.width>300||plan.length>300)fail('Overall roof dimensions including overhangs exceed the 300 ft model limit.');
+  if(Math.min(plan.leftEave,plan.rightEave)<=0)fail('Roof overhang extends to or below ground. Reduce the overhang, slope, or raise the support-line eave height.');
   positive(p.slope,'Roof rise',true); if (p.slope > 12) fail('Roof slope must be between 0:12 and 12:12.');
   for (const k of ['dead','live']) positive(p[k],k,true);
   coordinates(p.xPosts,p.width,'X post coordinates'); coordinates(p.yPosts,p.length,'Y post coordinates');
@@ -69,24 +76,25 @@ export function validate(p) {
   if (s.liveFraction > 1) fail('Seismic live-load fraction must be 0–1.');
 }
 export function geometry(p) {
-  const xp=coordinates(p.xPosts,p.width,'X post coordinates'), yp=coordinates(p.yPosts,p.length,'Y post coordinates');
-  const xs=[...xp];if(!xs.some(x=>Math.abs(x-p.width/2)<1e-8))xs.push(p.width/2);xs.sort((a,b)=>a-b);
-  const rise=p.roof==='flat'?0:p.slope/12;
-  const z=x=>p.height+(p.roof==='gable'?Math.min(x,p.width-x):x)*rise;
+  const xp=coordinates(p.xPosts,p.width,'X post coordinates'),yp=coordinates(p.yPosts,p.length,'Y post coordinates'),plan=roofPlan(p);
+  const xs=[...new Set([...xp,p.width/2,plan.xMin,plan.xMax])].sort((a,b)=>a-b),ys=[...new Set([...yp,plan.yMin,plan.yMax])].sort((a,b)=>a-b);
   const nodes=[],posts=[],members=[],cells=[];
-  const edges=(values,i,span)=>[i? (values[i-1]+values[i])/2:0,i<values.length-1?(values[i]+values[i+1])/2:span];
-  for(let j=0;j<yp.length;j++)for(let i=0;i<xs.length;i++){
-    const id=nodes.length,pos=[xs[i],yp[j],z(xs[i])],xi=xp.findIndex(x=>Math.abs(x-xs[i])<1e-8);
+  const edges=(values,i,low,high)=>[i?(values[i-1]+values[i])/2:low,i<values.length-1?(values[i]+values[i+1])/2:high];
+  for(let j=0;j<ys.length;j++)for(let i=0;i<xs.length;i++){
+    const id=nodes.length,pos=[xs[i],ys[j],roofHeightAt(p,xs[i])],xi=xp.indexOf(xs[i]),yi=yp.indexOf(ys[j]);
     nodes.push({id,pos});
-    if(xi>=0){const xb=edges(xp,xi,p.width),yb=edges(yp,j,p.length),tx=xb[1]-xb[0],ty=yb[1]-yb[0];
-      const name=`P${String(posts.length+1).padStart(2,'0')}`;
-      posts.push({name,node:id,pos,tx,ty,area:tx*ty,xBounds:xb,yBounds:yb});members.push({a:null,b:id,base:[xs[i],yp[j],0],type:'column'});
+    if(xi>=0&&yi>=0){
+      const xb=edges(xp,xi,plan.xMin,plan.xMax),yb=edges(yp,yi,plan.yMin,plan.yMax),tx=xb[1]-xb[0],ty=yb[1]-yb[0];
+      const coreX=edges(xp,xi,0,p.width),coreY=edges(yp,yi,0,p.length),coreTy=coreY[1]-coreY[0];
+      const post={name:`P${String(posts.length+1).padStart(2,'0')}`,node:id,pos,tx,ty,coreTy,area:tx*ty,coreArea:(coreX[1]-coreX[0])*coreTy,xBounds:xb,yBounds:yb};
+      post.overhangPatches=overhangPatches(p,post);post.overhangArea=post.area-post.coreArea;
+      posts.push(post);members.push({a:null,b:id,base:[xs[i],ys[j],0],type:'column'});
     }
     if(i)members.push({a:id-1,b:id,type:'beam'});if(j)members.push({a:id-xs.length,b:id,type:'beam'});
-    if(i&&j){const ids=[id-xs.length-1,id-xs.length,id,id-1],area=(xs[i]-xs[i-1])*(yp[j]-yp[j-1]);
-      const slope=(z(xs[i])-z(xs[i-1]))/(xs[i]-xs[i-1]);cells.push({ids,area,slope,half:(xs[i]+xs[i-1])/2<=p.width/2?1:2});}
+    if(i&&j){const ids=[id-xs.length-1,id-xs.length,id,id-1],area=(xs[i]-xs[i-1])*(ys[j]-ys[j-1]);
+      const slope=(roofHeightAt(p,xs[i])-roofHeightAt(p,xs[i-1]))/(xs[i]-xs[i-1]);cells.push({ids,area,slope,half:(xs[i]+xs[i-1])/2<=p.width/2?1:2,overhang:xs[i]<=0||xs[i-1]>=p.width||ys[j]<=0||ys[j-1]>=p.length});}
   }
-  return {nodes,posts,members,cells,xs,ys:yp,area:p.width*p.length,roofArea:cells.reduce((s,c)=>s+c.area*Math.sqrt(1+c.slope*c.slope),0)};
+  return {nodes,posts,members,cells,xs,ys:yp,roofYs:ys,plan,area:plan.area,roofArea:cells.reduce((sum,c)=>sum+c.area*Math.sqrt(1+c.slope*c.slope),0)};
 }
 export const directionalityInQ=p=>p.code.includes('7-16');
 export function velocityPressure(w,code='ASCE 7-22'){return 0.00256*w.kz*w.kzt*w.ke*w.speed**2*(code.includes('7-16')?w.kd:1);}
@@ -97,7 +105,7 @@ export function seismicCoefficient(s) {
   return {cs:Math.max(raw,minimum),raw,minimum,governing:raw>=minimum?'Sa(T) Ie / R':'Chapter 12 ELF minimum'};
 }
 export const WIND_CASES=['WX+','WX+↓','WX−','WX−↓','WY+','WY+↓','WY−','WY−↓'];
-export const DEMAND_LABELS={compression:'Compression',uplift:'Uplift',shear:'Shear',moment:'Moment'};
+export const DEMAND_LABELS={compression:'Compression',uplift:'Uplift',shear:'Shear',moment:'Moment',torsion:'Torsion'};
 export const directionalReference=p=>p.code.includes('7-22')?'ASCE 7-22 §12.5.1.2(a)':'100/30 project assumption · verify ASCE 7-16 applicability';
 export function orthogonalSeismicPatterns(){
   const patterns=[];
@@ -137,35 +145,43 @@ export function combinations(p) {
 }
 // Sum net pressure over the two halves of a post's tributary rectangle.
 export function roofForce(p,post,axis,sign,down,q){
-  const f=[0,0,0],mid=p.width/2,halfAreas=[];
+  const f=[0,0,0],mid=p.width/2,halfAreas=[],plan=roofPlan(p);
   const coeff=half=>p.wind[`roof${axis}${axis==='X'&&sign<0?3-half:half}${down?'Down':''}`];
   const governing=down?Math.min(coeff(1),coeff(2)):Math.max(coeff(1),coeff(2));
   for(const half of [1,2]){
-    const left=Math.max(post.xBounds[0],half===1?0:mid),right=Math.min(post.xBounds[1],half===1?mid:p.width);
+    const left=Math.max(post.xBounds[0],half===1?plan.xMin:mid),right=Math.min(post.xBounds[1],half===1?mid:plan.xMax);
     const area=Math.max(0,right-left)*post.ty;
     const slope=p.roof==='flat'?0:(p.slope/12)*(p.roof==='gable'&&half===2?-1:1);
     const gc=p.wind.uniformRoof?governing:coeff(half),pressure=q*gc;
     f[0]+=-pressure*slope*area;f[2]+=pressure*area;halfAreas.push({half,area,slope,gc,pressure});
   }
-  return {force:f,halves:halfAreas};
+  const overhangMoments=[0,0,0],patches=(post.overhangPatches??[]).map(patch=>{
+    const gc=p.wind.uniformRoof?governing:coeff(patch.half),pressure=q*gc,force=[-pressure*patch.slope*patch.area,0,pressure*patch.area],moment=patchMoment(patch,force);
+    moment.forEach((v,j)=>overhangMoments[j]+=v);return {...patch,gc,pressure,force,moment};
+  });
+  return {force:f,halves:halfAreas,overhangMoments,overhangPatches:patches};
 }
 export function analyze(p){
   validate(p);const model=geometry(p),q=velocityPressure(p.wind,p.code),windPressure=q*(directionalityInQ(p)?1:p.wind.kd),weight=(p.dead+p.live*p.seismic.liveFraction)*model.area;
   const seismicResult=seismicCoefficient(p.seismic),cs=seismicResult.cs,baseShear=cs*weight;
   const longitudinal=deriveLongitudinalWind(p,q,model.ys.length);
-  const basic={},windForces={},postCalcs=model.posts.map(post=>({...post,share:p.distribution==='equal'?1/model.posts.length:post.area/model.area,dead:p.dead*post.area,live:p.live*post.area}));
+  const basic={},windForces={},postCalcs=model.posts.map(post=>({...post,share:p.distribution==='equal'?1/model.posts.length:post.area/model.area,dead:p.dead*post.area,live:p.live*post.area,deadMoments:gravityOverhangMoment(post,p.dead),liveMoments:gravityOverhangMoment(post,p.live)}));
   const makeCase=(name,forces,details={})=>{
-    const reactions=forces.map(([fx,fy,fz],i)=>[fx,fy,fz,-fy*(details.longitudinal?details.posts[i].horizontalHeight:model.posts[i].pos[2]),fx*model.posts[i].pos[2],0]);
+    const reactions=forces.map(([fx,fy,fz],i)=>{
+      const m=details.posts?.[i]?.appliedMoments??[0,0,0];
+      return [fx,fy,fz,-fy*(details.longitudinal?details.posts[i].horizontalHeight:model.posts[i].pos[2])+m[0],fx*model.posts[i].pos[2]+m[1],m[2]];
+    });
     const totalLoad=[0,1,2].map(j=>forces.reduce((sum,f)=>sum+f[j],0));
     basic[name]={reactions,totalLoad,support:reactions.map(row=>row.map(v=>-v)),details};
   };
-  makeCase('D',postCalcs.map(post=>[0,0,-post.dead]));makeCase('Lr',postCalcs.map(post=>[0,0,-post.live]));
+  makeCase('D',postCalcs.map(post=>[0,0,-post.dead]),{posts:postCalcs.map(post=>({appliedMoments:post.deadMoments}))});
+  makeCase('Lr',postCalcs.map(post=>[0,0,-post.live]),{posts:postCalcs.map(post=>({appliedMoments:post.liveMoments}))});
   for(const axis of ['X','Y'])for(const sign of [1,-1])for(const down of [false,true]){
     const name=`W${axis}${sign>0?'+':'−'}${down?'↓':''}`,H=axis==='Y'&&longitudinal?longitudinal.force:windPressure*p.wind[`cf${axis}`]*p.wind[`area${axis}`],details=[];
     const forces=postCalcs.map(post=>{
       const roof=roofForce(p,post,axis,sign,down,windPressure),f=[...roof.force],share=axis==='Y'&&longitudinal?longitudinalPostShare(p,post):post.share,horizontal=sign*H*share;
       const horizontalHeight=axis==='Y'&&longitudinal?Math.max(post.pos[2],longitudinal.centroidZ):post.pos[2];
-      f[axis==='X'?0:1]+=horizontal;details.push({horizontal,roof,share,horizontalHeight});return f;
+      f[axis==='X'?0:1]+=horizontal;details.push({horizontal,roof,share,horizontalHeight,appliedMoments:roof.overhangMoments});return f;
     });
     makeCase(name,forces,{posts:details,referenceForce:H,down,longitudinal:axis==='Y'&&!!longitudinal});windForces[name]=basic[name].totalLoad;
   }
@@ -182,13 +198,13 @@ export function envelope(result,family) {
     for(const c of cases){const value=c.reactions[i][j];if(value<min.value)min={value,case:c.name};if(value>max.value)max={value,case:c.name};}return {min,max};
   })}));
 }
-const demandValues=row=>({compression:Math.max(0,-row[2]),uplift:Math.max(0,row[2]),shear:Math.hypot(row[0],row[1]),moment:Math.hypot(row[3],row[4])});
+const demandValues=row=>({compression:Math.max(0,-row[2]),uplift:Math.max(0,row[2]),shear:Math.hypot(row[0],row[1]),moment:Math.hypot(row[3],row[4]),torsion:Math.abs(row[5])});
 // Use unrounded values for ties. The tolerance is in lb or lb-ft, not displayed kip precision.
 const demandTie=(value,max)=>Math.abs(value-max)<=1e-7+1e-9*Math.abs(max);
 export function governingBases(result,family){
   const all=result.cases.filter(c=>c.family===family).flatMap(c=>c.reactions.map((row,i)=>({post:result.model.posts[i].name,case:c.name,reactions:row,...demandValues(row)})));
   if(!all.length)return [];
-  return Object.keys(DEMAND_LABELS).map(key=>{
+  return Object.keys(DEMAND_LABELS).filter(key=>key!=='torsion'||all.some(row=>row.torsion>1e-7)).map(key=>{
     const winner=all.reduce((a,b)=>b[key]>a[key]?b:a),active=winner[key]>1e-7;
     return {key,...winner,active,ties:active?all.filter(row=>demandTie(row[key],winner[key])):[]};
   });
@@ -216,7 +232,8 @@ export function warnings(p){return [
   ...(p.code.includes('7-16')&&p.hazard?.source?.includes('7-22')?['The ASCE 7-22 hazard report does not match the selected ASCE 7-16 edition.']:[]),
   `Independent cantilever posts; roof gravity and roof-normal wind loads use geometric tributary areas. ${isEnvelopeLongitudinal(p)?'Transverse wind and seismic use':'Horizontal reference wind and seismic use'} ${p.distribution==='equal'?'equal load per post':'tributary area fractions'}${isEnvelopeLongitudinal(p)?'; §28.3.7 longitudinal wind uses the two outer sidewalls and their tributary lengths':''}. This is an assigned load path, not a stiffness redistribution or a universal conservative bound.`,
   ...(p.wind.uniformRoof?['For each direction and sign, apply the governing net roof coefficient uniformly. This envelopes the entered local pressures but does not replace checking all required code wind patterns.']:[]),
-  'Roof-load eccentric moments, diaphragm torsion, accidental torsion, P–Δ, overstrength/anchorage, and member/connection/foundation capacity are outside this hand-calculation scope.',
+  'Inboard roof-load eccentric moments, diaphragm torsion, accidental torsion, P–Δ, overstrength/anchorage, and member/connection/foundation capacity are outside this hand-calculation scope.',
+  ...(roofPlan(p).hasOverhang?['Overhangs cantilever from adjacent outer post lines. Gravity and roof-normal wind cantilever moments are transferred to the edge posts and added to Hh; roof slope/end overhangs can produce Mz. Verify the roof-to-column moment connection and framing capacity. Inboard roof-load transfer eccentricities remain excluded. Manual wind areas/coefficients must be reviewed for the enlarged roof.']:[]),
   'Seismic design combinations include all eight signed 100%/30% orthogonal patterns. This implements directional force effects; member/foundation strength and drift acceptance checks remain outside the app.',
   'Only D, unreduced roof live Lr, W, and E are combined. Check snow, rain/ponding, ice, thermal, and other applicable loads separately.'
 ];}

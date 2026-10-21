@@ -24,22 +24,22 @@ Run commands from the repository root. `npm run build` produces a static site in
 
 ## Hand-calculation method and signs
 
-Columns are independent fixed-base cantilevers. Their tops transmit **no moments**. There is no roof stiffness model or diaphragm redistribution. The roof drawing is a geometry sketch. The default method assigns loads using the tributary rectangles confirmed by the user; equal sharing of horizontal wind and seismic shear is an explicit alternative.
+Columns are independent fixed-base cantilevers. No frame-restraint benefit is taken at the column tops; applied roof-overhang moments are transferred where present. There is no roof stiffness model or diaphragm redistribution. The roof drawing is a geometry sketch. The default method assigns loads using the tributary rectangles confirmed by the user; equal sharing of horizontal wind and seismic shear is an explicit alternative.
 
 For each post:
 
 - Tributary width and length extend halfway to adjacent posts and stop at the roof perimeter. `At = bt × lt`.
-- `ND = D × At` and `NLr = Lr × At`, with pressure acting on horizontal projected area. Include all permanent framing/column weight in D. Gravity acts at the post centerline; eccentric roof transfer moments need a separate check.
+- `ND = D × At` and `NLr = Lr × At`, with pressure acting on horizontal projected area. Include all permanent framing/column weight in D. Inboard gravity acts at the post centerline. Overhang cantilever moments are included; other roof transfer eccentricities need a separate check.
 - For horizontal reference wind, `H = qh GCf Aref`; post shear is `H × At/A` by default.
 - Roof wind acts normal to each roof half. Integrate its components over the post's tributary rectangle: `Fz = sum(p At,half)` and `Fx,roof = -sum(p slope At,half)`. This is equivalent to multiplying normal pressure by actual roof area and the unit normal.
 - Seismic base shear is `V = Cs W`; post shear is `V × At/A` by default. This is a single roof-level hand allocation without a height-exponent distribution.
-- For the manual wind and seismic cases, `My = Vx × h`, `Mx = -Vy × h`, and `Mz = 0`, using the actual post height. The optional §28.3.7 longitudinal wind uses the conservative lever arm described below; combinations superpose signed basic actions. No benefit is taken for top restraint.
+- For the manual wind and seismic cases, `My = Vx × h`, `Mx = -Vy × h`, plus applied roof-overhang moments where present; `Mz` includes any overhang roof-wind torsion, using the actual post height. The optional §28.3.7 longitudinal wind uses the conservative lever arm described below; combinations superpose signed basic actions. No benefit is taken for top restraint.
 
 Global X is across the width, Y along the length, Z upward. Base actions are **loads delivered by the structure to the foundation**. Positive Fz means uplift; the displayed compression is `N = -Fz`. Moments follow the right-hand rule. Every row is one concurrent set.
 
 For ASCE 7-22, velocity pressure is `qh = 0.00256 Kz Kzt Ke Vult^2`; directionality Kd is applied outside qh, exactly once. Manual MWFRS pressure is `p = qh Kd GCn` and horizontal reference force is `H = qh Kd GCf Aref`. This corrects the prior display that included Kd inside the quantity labeled qh; existing manual MWFRS loads retain the same numerical values. The legacy ASCE 7-16 metadata selection retains Kd inside qh and does not apply it again. Manual MWFRS coefficients must be selected from the applicable procedure and include gust effects. Both uplift and downward roof patterns are evaluated with ±X/±Y reference force. A downward pattern has a ↓ suffix. By default, the governing entered coefficient for each sign/direction is applied uniformly across the roof; an option retains separate half-roof coefficients. Negative X mirrors roof halves, while ±Y use the same roof pattern. This envelopes the **entered local pressures** but does not guarantee an upper bound for every global action or replace checking all code-required patterns, including mixed-sign patterns. C&C effective wind area is used for coefficient selection; component force uses a separately entered tributary area. C&C loads are not added to MWFRS reactions.
 
-The **Hand calculations** tab is the primary result: numbered calculation sections, code section references, equations, substituted numbers, answers with units, and a worked concurrent combination for the selected post. The common-base section identifies maximum compression, uplift, resultant shear, and resultant moment across all posts. It retains each governing post/case's full force set. Those four extrema are not one simultaneous set; a base interaction check may govern in another case. A common connection detail should be checked against all concurrent cases.
+The **Hand calculations** tab is the primary result: numbered calculation sections, code section references, equations, substituted numbers, answers with units, and a worked concurrent combination for the selected post. The common-base section identifies maximum compression, uplift, resultant shear, and resultant moment across all posts. It retains each governing post/case's full force set. A separate torsion criterion appears when Mz is nonzero. Those extrema are not one simultaneous set; a base interaction check may govern in another case. A common connection detail should be checked against all concurrent cases.
 
 The printable HTML export includes project assumptions, every post's tributary dimensions, worked wind/seismic arithmetic, C&C pressures, common-base envelopes, all concurrent reactions, and complete source inputs. JSON and CSV exports are also available.
 
@@ -79,6 +79,35 @@ The result tab and printable hand sheet show source figure, θ, h, both h/L rati
 
 C&C results remain local component demands; they do not modify or add to MWFRS post reactions. Manual mode preserves entered net coefficients and applies no extra gust factor.
 
+## Roof overhangs
+
+**Geometry → Roof overhangs** provides four independent distances, **X start**, **X end**, **Y start**, **Y end**, in feet of horizontal projection. Width/length and coordinates continue to describe the outside post lines (`0…width`, `0…length`). Zero is the default; older version 1 project files without overhang fields behave identically. The roof slope extends through the overhangs, with the ridge and support heights unchanged. The eave-height input is at the X = 0 support line; roof-edge elevations are calculated. Roof edges at/below ground and overall roof dimensions above 300 ft are rejected.
+
+```text
+Broof = Bgrid + eX,start + eX,end
+Lroof = Lgrid + eY,start + eY,end
+Aroof = Broof Lroof
+```
+
+Exterior tributary boundaries extend to the actual roof edges. Added corner area enters axial load once. Gravity, seismic weight, manual tributary lateral shares, roof-normal wind, actual sloped surface area, and the sketch all use the enlarged roof. Overhangs are amber in the sketch. They add no posts or transverse frame lines, and the existing support grid does not move when overhang inputs change.
+
+**Applied cantilever moments are included.** The assumed load path is a roof cantilever rooted at its adjacent outer post line, transferring its load and moment to the edge posts. For an isolated uniform strip, `|M| = q bt e²/2`. Each outboard tributary rectangle is split at the support lines/ridge; its signed outboard lever arm is half its projection. Corner patches contribute moments in both directions. Inboard load transfer eccentricities retain the original centered tributary-load assumption. This calculation does not establish beam, roof-to-post connection, or post capacity; verify that the actual framing transfers these applied moments.
+
+```text
+Moverhang = Σ(r × Fpatch)
+Gravity: Fpatch = (0, 0, −q Apatch)
+Wind:    Fpatch = (−p slope Apatch, 0, p Apatch)
+Mx,base = −Vy h + Mx,overhang
+My,base =  Vx h + My,overhang
+Mz,base = Mz,overhang
+```
+
+Here rx/ry are distances outside the adjacent outer post lines and rz is the roof-slope elevation difference from that line. Lateral roof forces otherwise retain the original application at post-top height. All source-load factors also multiply their overhang moments, including the D factor used for vertical seismic effects. Sloping roof wind on end overhangs can create Mz. Nonzero torsion receives a separate governing-demand card and combination highlights; resultant bending still means `hypot(Mx,My)`. All six concurrent actions are exported.
+
+The hand sheet and printable report show overall roof dimensions, added area, each selected post's cantilever patches, moment equations, substituted arithmetic, and applied moment totals. Project JSON saves all four inputs; CSV adds post overhang area and overall roof dimensions.
+
+Automatic C&C uses overall roof dimensions and actual roof-edge heights for h/L and zone dimension a. A gable with unequal edge heights uses the higher eave for a conservative h basis; confirm figure applicability and component location. Manual wind reference areas and coefficients do not automatically change and must be reviewed for the enlarged roof. The §28.3.7 frame width, equivalent end-wall area, frame count, and longitudinal sidewall tributary lengths remain on the **support-grid footprint**; roof overhangs are included in its separate roof-normal loads. All review flags clear when overhang distances change.
+
 ## Longitudinal open-building wind — §28.3.7
 
 In **Wind & C&C**, select **Longitudinal wind method → ASCE §28.3.7**. Existing projects retain the manual method until switched. This implements the supplied ASCE 7-22 horizontal wind procedure for gable/pitched roofs with transverse frames, parallel to the ridge (Y). It checks `0° < θ < 45°`, low-rise height `h ≤ 60 ft` and `h ≤ least plan dimension`; the engineer must verify all remaining Chapter 28 conditions and the structural load path. Other roof shapes/editions require an applicable manual procedure.
@@ -110,7 +139,7 @@ This force replaces the previous manual Y reference force and enters both signed
 
 This is an engineering review tool, not automatic CBC/ASCE compliance certification. The user-specified R is recorded rather than verified against a material/system table. Code selection does not automatically supply aerodynamic tables, spectrum ordinates, period limits, system eligibility, or jurisdictional amendments.
 
-The Chapter 2 combination set is reduced to D, Lr, W, and E. Service cases are explicitly unfactored diagnostic studies; ASD applies 0.6 to ultimate wind. Snow, rain/ponding, ice, floor live load, thermal actions, equipment, and other applicable loads need separate treatment. This version implements the 100%/30% directional force-effect combinations, but does not implement accidental torsion, overstrength/anchorage combinations, capacity design, uplift-dependent support behavior, roof-load eccentric transfer moments, P–Delta, member strength, connection/anchor design, foundations, soil flexibility, or roof diaphragm design. Automatic Kz lookup, automatic transverse/roof MWFRS coefficient selection, automatic period estimation, and numeric multi-period spectrum retrieval are not implemented.
+The Chapter 2 combination set is reduced to D, Lr, W, and E. Service cases are explicitly unfactored diagnostic studies; ASD applies 0.6 to ultimate wind. Snow, rain/ponding, ice, floor live load, thermal actions, equipment, and other applicable loads need separate treatment. This version implements the 100%/30% directional force-effect combinations, but does not implement accidental torsion, overstrength/anchorage combinations, capacity design, uplift-dependent support behavior, inboard roof-load eccentric transfer moments, diaphragm torsion, P–Delta, member strength, connection/anchor design, foundations, soil flexibility, or roof diaphragm design. Automatic Kz lookup, automatic transverse/roof MWFRS coefficient selection, automatic period estimation, and numeric multi-period spectrum retrieval are not implemented.
 
 ## Validation
 

@@ -1,3 +1,4 @@
+import { roofPlan, geometricWindHeight } from './roofGeometry.js';
 // Source: the user's complete ASCE Figure 30.5-1 and 30.5-2 excerpts.
 // Each row lists [Zone 3, Zone 2, Zone 1] pairs [toward(+), away(-)] at A <= a².
 // In both supplied tables, the middle-area Zone 3 uses the Zone 2 pair;
@@ -44,12 +45,11 @@ export const isAutomaticCc = p => p.wind.ccSource === 'asce-30.5';
 export function roofAngle(p){return p.roof==='flat'?0:Math.atan(p.slope/12)*180/Math.PI;}
 export function windMeanHeight(p){
   const theta=roofAngle(p);
-  const roofRise=p.roof==='flat'?0:p.width*p.slope/12*(p.roof==='gable'?0.5:1);
-  const computed=theta<=10+1e-10?p.height:p.height+roofRise/2;
+  const computed=geometricWindHeight(p),plan=roofPlan(p);
   const override=p.wind.ccMeanHeight;
   const overridden=override!==undefined&&override!==null&&override!=='';
   if(overridden)requireNumber(override,'C&C mean roof height');
-  return {value:overridden?override:computed,overridden,computed,rule:overridden?'Engineer-entered h override':theta<=10+1e-10?'Eave height for roof angle ≤ 10° (mean-height definition)':'Average of eave and highest roof elevation'};
+  return {value:overridden?override:computed,overridden,computed,rule:overridden?'Engineer-entered h override':plan.hasOverhang?'Actual roof-edge eave height (higher gable eave if unequal); average with highest point above 10°':theta<=10+1e-10?'Eave height for roof angle ≤ 10° (mean-height definition)':'Average of eave and highest roof elevation'};
 }
 export function lookupFreeRoofCc({roof,theta,h,width,length,effectiveArea,blockage}){
   if(!['flat','mono','gable'].includes(roof))throw new Error('C&C tables support flat/mono-slope or gable free roofs only.');
@@ -77,7 +77,7 @@ export function deriveCc(p,q){
   const directionality=p.code.includes('7-16')?1:p.wind.kd,pressureBase=q*directionality;
   if(!isAutomaticCc(p))return {mode:'manual',directionality,pressureBase,zones:p.wind.cc.map(z=>({...z,upPressure:pressureBase*z.up,downPressure:pressureBase*z.down,rawUpPressure:pressureBase*z.up,rawDownPressure:pressureBase*z.down,upForce:pressureBase*z.up*p.wind.ccArea,downForce:pressureBase*z.down*p.wind.ccArea}))};
   if(!p.code.includes('7-22'))throw new Error('Automatic C&C uses the supplied ASCE 7-22 figures. Select ASCE 7-22 or use manual coefficients for the selected edition.');
-  const meanHeight=windMeanHeight(p),lookup=lookupFreeRoofCc({roof:p.roof,theta:roofAngle(p),h:meanHeight.value,width:p.width,length:p.length,effectiveArea:p.wind.ccEffectiveArea,blockage:p.wind.ccBlockage??0});
+  const meanHeight=windMeanHeight(p),plan=roofPlan(p),lookup=lookupFreeRoofCc({roof:p.roof,theta:roofAngle(p),h:meanHeight.value,width:plan.width,length:plan.length,effectiveArea:p.wind.ccEffectiveArea,blockage:p.wind.ccBlockage??0});
   const gust=p.wind.ccGust??0.85,minimum=p.wind.ccMinimumPressure??16;
   requireNumber(gust,'C&C gust multiplier G');requireNumber(minimum,'C&C entered pressure floor',true);
   if(p.wind.ccPressureReviewed!==undefined&&typeof p.wind.ccPressureReviewed!=='boolean')throw new Error('C&C pressure review flag must be boolean.');
