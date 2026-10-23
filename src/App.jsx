@@ -1,6 +1,6 @@
 import Chapter27Calcs from './Chapter27Calcs.jsx';
 import MpbzCheck from './MpbzCheck.jsx';
-import { MPBZ_ACTIONS } from './mpbz.js';
+import { MPBZ_MODELS, catalogSettings } from './mpbzCatalog.js';
 import { isChapter27 } from './chapter27.js';
 import { compactCaseName, compactCases } from './presentation.js';
 import React, { useState, useMemo, useEffect, useRef } from 'react';
@@ -137,6 +137,7 @@ export default function App(){
     if(section==='seismic')return <>
       <div className="section-intro"><span className="eyebrow">04 / SEISMIC</span><h2>A defined load path.</h2><p>Chapter 15 structure, Chapter 12 cantilever columns.</p></div>
       <div className="system-card"><Activity size={22}/><div><strong>Cantilever-column system</strong><span>User-specified response modification factor</span></div><b>R <em>1.5</em></b></div>
+      <Select label="Seismic design category" value={p.seismic.sdc} onChange={v=>nested('seismic','sdc',v)}>{!['A','B','C','D','E','F'].includes(p.seismic.sdc)&&<option value={p.seismic.sdc}>Choose category · {p.seismic.sdc||'not entered'}</option>}{['A','B','C','D','E','F'].map(v=><option key={v} value={v}>{v}</option>)}</Select>
       <Select label="Base shear procedure" value={p.seismic.method} onChange={v=>nested('seismic','method',v)}><option value="elf">Building-like · Chapter 12 ELF via Chapter 15</option><option value="manual">Project-specific Chapter 15 Cs</option></Select>
       <div className="field-grid">{[['sds','SDS','g'],['sd1','SD1','g'],['s1','S1','g'],['tl','TL','s'],['period','Fundamental period · T','s'],['ie','Importance factor · Ie',null]].map(([k,l,u])=><Field key={k} label={l} value={p.seismic[k]} unit={u} onChange={v=>nested('seismic',k,v)}/>)}</div>
       {p.seismic.method==='elf'&&<><Field label="Design spectrum ordinate · Sa(T)" value={p.seismic.sa} unit="g" onChange={v=>nested('seismic','sa',v)} hint="Enter the ordinate at T from the applicable design spectrum. Not inferred from SDS or SD1."/><Note warning>The default Sa(T) is illustrative. The PDF’s spectrum chart has not been digitized. Confirm the Chapter 15 structure-similar-to-buildings classification before using this branch.</Note></>}
@@ -148,14 +149,20 @@ export default function App(){
       <label className="checkbox"><input type="checkbox" checked={p.seismic.reviewed} onChange={e=>nested('seismic','reviewed',e.target.checked)}/><span>I reviewed the Chapter 15 classification, period, spectrum ordinate, coefficient, and seismic factors.</span></label>
       <Note>{directionalReference(p)}: combined post shear = √[Vpost² + (0.30 Vpost)²] = 1.044 Vpost for equal directional shears. Both primary axes are checked; the compact view groups repeated direction cases. ρ applies to both horizontal effects; Ev is included once. Period estimation, accidental torsion, Ω₀, drift, and member/foundation capacity checks remain separate.</Note>
     </>;
-    if(section==='mpbz')return <>
-      <div className="section-intro"><span className="eyebrow">07 / BASE CAPACITY</span><h2>Simpson MPBZ.</h2><p>Catalog ASD capacity and combined-load check.</p></div>
-      <Field label="MPBZ model" type="text" value={p.mpbz?.model??''} onChange={v=>nested('mpbz','model',v)} hint="Use the exact model and applicable catalog table."/>
-      <Field label="MPBZ catalog / installation reference" type="text" value={p.mpbz?.source??''} onChange={v=>nested('mpbz','source',v)}/>
-      <Note warning>The Simpson catalog sheet and interaction equations are pending. Overall DCR is not established. The result tab already collects the governing ASD demands for every post.</Note>
-      <details><summary>Enter catalog ASD allowable capacities for component screening</summary><p className="helper">Use applicable catalog allowables after verifying species, post size, concrete, fasteners and installation. These entries do not define a combined-load interaction equation.</p>{MPBZ_ACTIONS.map(v=><Field key={v.key} label={`MPBZ allowable · ${v.label}`} unit={v.unit} min="0" value={p.mpbz?.[v.key]??''} onChange={value=>nested('mpbz',v.key,value)}/>)}</details>
-      <button className="text-button" onClick={()=>setTab('mpbz')}>View MPBZ ASD demand / capacity ratios<ArrowUpRight size={13}/></button>
-    </>;
+    if(section==='mpbz'){
+      const settings=catalogSettings(p);
+      return <>
+      <div className="section-intro"><span className="eyebrow">07 / BASE CAPACITY</span><h2>Simpson MPBZ.</h2><p>Supplied catalog table · ASD combined-load interaction.</p></div>
+      <Select label="MPBZ model" value={MPBZ_MODELS[settings.model]?settings.model:''} onChange={v=>nested('mpbz','model',v)}><option value="">Select catalog model</option>{Object.entries(MPBZ_MODELS).map(([key,v])=><option key={key} value={key}>{key} · {v.post} post</option>)}</Select>
+      <Select label="MPBZ concrete reinforcement" value={settings.reinforcement} onChange={v=>nested('mpbz','reinforcement',v)}><option value="unreinforced">Unreinforced concrete</option><option value="reinforced">Reinforced concrete</option></Select>
+      <Select label="MPBZ concrete condition" value={settings.concrete} onChange={v=>nested('mpbz','concrete',v)}><option value="cracked">Cracked · conservative starting selection</option><option value="uncracked">Uncracked · verify applicability</option></Select>
+      <Field label="MPBZ concrete strength · f′c" value={settings.fc} unit="psi" min="2500" onChange={v=>nested('mpbz','fc',v)} hint="Catalog minimum 2,500 psi; no capacity increase for stronger concrete."/>
+      <div className="source-card"><span className="eyebrow">SEISMIC CATEGORY · LINKED INPUT</span><strong>SDC {settings.sdc||'not entered'}</strong><p>Read directly from the Seismic section. Wind uses the Wind / A–B row; earthquake combinations use the category-specific row.</p><button className="text-button" onClick={()=>setSection('seismic')}>Edit seismic design category<ArrowUpRight size={13}/></button></div>
+      {settings.sdc==='C'&&<label className="checkbox"><input type="checkbox" checked={settings.dwellingException} onChange={e=>nested('mpbz','dwellingException',e.target.checked)}/><span>Use note 6 SDC C dwelling exception: project qualifies under IBC §1613.1 as a detached one- or two-family dwelling.</span></label>}
+      <Note>Capacities use the supplied DF/SP catalog rows and model-matched SDS screws. Reinforced selection requires the appropriate designed footing reinforcement. Download enhancement by grouting is not taken.</Note>
+      <Note>Note 9: axial ratio + moment ratio + lateral ratio ≤ 1.0, checked for each concurrent ASD post/case. The lesser wood/concrete moment capacity governs. No load-duration increase is applied.</Note>
+      <button className="text-button" onClick={()=>setTab('mpbz')}>View MPBZ governing design capacity ratio<ArrowUpRight size={13}/></button>
+    </>;}
     if(section==='members')return <>
       <div className="section-intro"><span className="eyebrow">05 / HAND CALCULATION</span><h2>Simple. Traceable.</h2><p>Tributary loads and cantilever statics.</p></div>
       <Select label="Horizontal load allocation" value={p.distribution} onChange={v=>update('distribution',v)}><option value="tributary">Tributary area share · At / A</option><option value="equal">Equal lateral share · 1 / n</option></Select>
@@ -169,7 +176,7 @@ export default function App(){
       <Field label="Project name" type="text" value={p.name} onChange={v=>update('name',v)}/><Field label="Site address" type="text" value={p.address} onChange={v=>update('address',v)}/>
       <Select label="Design code" value={p.code} onChange={v=>update('code',v)}><option>2025 CBC / ASCE 7-22</option><option>2022 CBC / ASCE 7-16</option></Select>
       <Select label="Risk category" value={p.risk} onChange={v=>update('risk',v)}>{['I','II','III','IV'].map(v=><option key={v}>{v}</option>)}</Select>
-      <Field label="Site soil class" type="text" value={p.seismic.site} onChange={v=>nested('seismic','site',v)}/><Field label="Seismic design category" type="text" value={p.seismic.sdc} onChange={v=>nested('seismic','sdc',v)}/>
+      <Field label="Site soil class" type="text" value={p.seismic.site} onChange={v=>nested('seismic','site',v)}/>
       <button className="upload-card" onClick={()=>pdfRef.current.click()} disabled={busy}><Upload size={22}/><strong>{busy?'Reading report…':'Import ASCE hazard PDF'}</strong><span>Extract the site address, wind, and seismic values</span></button>
       <div className="source-card"><span className="eyebrow">CURRENT HAZARD SOURCE</span><strong>{p.hazard?.name||'Manual entry'}</strong><p>{p.hazard?.source||'No source recorded'}</p>{p.hazard?.latitude!==undefined&&<span className="mono">{p.hazard.latitude}, {p.hazard.longitude}</span>}</div>
       <Note>PDF import updates recognized hazard values and the site address when found. If no address is found, your existing address is kept. It preserves your model and requires renewed review of design coefficients. PDFs are processed in your browser.</Note>

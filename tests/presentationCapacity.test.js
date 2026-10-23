@@ -19,21 +19,16 @@ test('compact cases keep the true concurrent governing direction for every crite
  }
  assert.equal(compactCaseName('0.9D + W27X B γ180'),'0.9D + WX');assert.equal(compactCaseName('EX− + 0.3EY+'),'EX + 0.3EY');
 });
-test('component capacities use ASD only, retain axes, and never assert an overall catalog pass',()=>{
- const p={mpbz:{model:'User model',source:'Pending test source',compression:1,uplift:2,vx:1,vy:1,mx:2,my:2}},r={model:{posts:[{name:'P01'}]},cases:[
-  {family:'ASD',name:'case A',reactions:[[100,-200,300,400,-500,10]]},
-  {family:'ASD',name:'case B',reactions:[[-50,100,-600,-200,250,-20]]},
-  {family:'LRFD',name:'factored',reactions:[[1e9,1e9,-1e9,1e9,1e9,1e9]]},
- ]},c=mpbzCheck(p,r),rows=Object.fromEntries(c.rows.map(v=>[v.key,v]));
- close(rows.compression.ratio,.6);close(rows.uplift.ratio,.15);close(rows.vx.ratio,.1);close(rows.vy.ratio,.2);close(rows.mx.ratio,.2);close(rows.my.ratio,.25);
- assert.equal(rows.mz.ratio,null);assert.equal(c.status,'catalog-pending');assert.ok(c.missing.includes('Torsion'));assert.equal(rows.compression.case,'case B');assert.equal(c.passed,undefined);
+test('legacy manual capacities do not override the supplied catalog selection',()=>{
+ const p=cloneDefault();p.mpbz={model:'Old manual model',vx:5000};const r=analyze(p),check=mpbzCheck(p,r);
+ assert.equal(check.status,'selection-required');assert.equal(check.passed,null);assert.equal(check.records.length,0);
+ p.mpbz.model='MPB66Z';const catalog=mpbzCheck(p,r);assert.ok(catalog.governing);assert.equal(catalog.profiles.wind.lateral,2405);
 });
-test('MPBZ missing/zero capacities remain pending, not zero utilization or unbounded approval',()=>{
- const p=cloneDefault(),r=analyze(p),missing=mpbzCheck(p,r);assert.ok(missing.rows.every(v=>v.ratio===null));assert.equal(missing.hasRatios,false);
- p.mpbz={vx:0};assert.equal(mpbzCheck(p,r).rows.find(v=>v.key==='vx').ratio,null);
- p.mpbz={vx:-1};assert.throws(()=>analyze(p),/MPBZ allowable/);p.mpbz=null;assert.throws(()=>analyze(p),/MPBZ capacity inputs/);
+test('invalid MPBZ input types are rejected without silently selecting a different capacity',()=>{
+ const p=cloneDefault();p.mpbz={vx:-1};assert.throws(()=>analyze(p),/MPBZ allowable/);p.mpbz=null;assert.throws(()=>analyze(p),/MPBZ capacity inputs/);
+ p.mpbz={reinforcement:'anything'};assert.throws(()=>analyze(p),/reinforced or unreinforced/);
 });
-test('compact reports contain direct resultant arithmetic, hidden detailed checks, and pending MPBZ provenance',()=>{
- const p=cloneDefault();p.mpbz={model:'<script>bad</script>',source:'User source',vx:5};const html=reportHtml(p,analyze(p));
- assert.ok(html.includes('√[Vx² + (0.30 Vx)²]'));assert.ok(html.includes('1.044 Vx'));assert.ok(html.includes('<details><summary>Detailed signed load cases'));assert.ok(html.includes('Overall MPBZ catalog DCR: pending.'));assert.ok(html.includes('&lt;script&gt;bad&lt;/script&gt;'));assert.ok(!html.includes('<script>'));
+test('compact reports include resultant arithmetic, catalog ratios and escaped input provenance',()=>{
+ const p=cloneDefault();p.mpbz={model:'MPB66Z',source:'<script>bad</script>'};const html=reportHtml(p,analyze(p));
+ assert.ok(html.includes('√[Vx² + (0.30 Vx)²]'));assert.ok(html.includes('1.044 Vx'));assert.ok(html.includes('<details><summary>Detailed signed load cases'));assert.ok(html.includes('GOVERNING DCR ='));assert.ok(html.includes('Catalog note 9'));assert.ok(html.includes('&lt;script&gt;bad&lt;/script&gt;'));assert.ok(!html.includes('<script>'));
 });

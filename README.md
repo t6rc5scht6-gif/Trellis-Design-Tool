@@ -101,11 +101,29 @@ Every A/B pattern is integrated by its pressure regions rather than replacing mi
 
 **Additional horizontal force · X/Y** are separate nonnegative force inputs in pounds for exposed columns, fascia, or other applicable surfaces. Zero starts the input and requires justification; these roof figures do not derive those surface forces. Kz and G require project review at the displayed actual roof height. The source coefficients, region pressures, geometry, and governing post wind effects are recorded in the hand sheet/report. Chapter 27 source patterns feed the existing service, ASD and LRFD combination factors.
 
-## Simpson MPBZ capacity check — catalog source pending
+## Simpson MPBZ catalog interaction
 
-**Simpson MPBZ** inputs and the **MPBZ capacity** result tab collect the exact model/source and applicable entered catalog ASD allowable loads. The result searches every post and **ASD** combination for compression, uplift, Vx, Vy, Mx, My and torsion, preserving the governing concurrent source set. Entered forces use kip and moments kip-ft; an individual component ratio is demand / entered allowable. Zero or missing capacity stays pending. No catalog capacity has been invented, no LRFD demands are compared with ASD allowables, and no extra wind factor is applied to the catalog check.
+In **Simpson MPBZ**, select **MPB44Z (4×4)**, **MPB66Z (6×6)** or **MPB88Z (8×8)** and **unreinforced/reinforced** concrete. The table is transcribed from the user's supplied Simpson catalog image in `src/mpbzCatalog.js`; its edition/page are not visible, so none is invented. Both cracked/uncracked columns and all reinforcement/SDC rows are included. The starting concrete condition is **cracked**. The model must be selected explicitly; previous manually entered capacities are retained in saved input metadata but do not override catalog values.
 
-**The requested overall MPBZ catalog DCR is not yet implemented:** the Simpson sheet must establish the exact model, wood/fastener/concrete/installation conditions, available capacities, and combined-load/biaxial interaction equation. Passing individual component ratios does not establish that combined-load check. The UI/report always identify the overall result as pending, including when entered individual capacities are adequate. The source sheet is needed to finish and validate the manufacturer-specific acceptance calculation.
+**Seismic design category is read from the Seismic section**, including changes made by hazard-report import. It is not a second MPBZ input. Wind combinations use the catalog's **Wind / SDC A–B** row. Earthquake combinations use A–B for SDC A/B and **C–F** for SDC C/D/E/F. Gravity-only combinations use the nonseismic row. Note 6's SDC C detached one-/two-family dwelling exception is an explicit optional setting; it never changes D/E/F selection. No category is guessed for unrecognized inputs.
+
+The check searches every post and every **concurrent ASD** combination. Source-load factors are already in the reactions. The uploaded sheet's note 9 is:
+
+```text
+DCR = (Design Uplift / Allowable Uplift OR Design Download / Allowable Download)
+    + (Design Moment / Allowable Moment)
+    + (Design Lateral / Allowable Lateral) <= 1.0
+```
+
+The axial term uses uplift **or** download according to the sign of that concurrent reaction. Moment allowable is the lesser applicable wood/concrete value (note 8). Separate component extrema from different cases are not added together. The report shows each term, substituted arithmetic, actual concurrent reactions, governing post/combination, all per-post governing DCRs, selected capacities and source conditions.
+
+The supplied sheet does not state a biaxial resultant interaction rule. For this connector check, conservative demand inputs are **V = |Vx| + |Vy|** and **M = |Mx| + |My|**. RSS shear and moment are also displayed, and the separate seismic check remains `sqrt(Vx² + (0.30Vx)²) = 1.044Vx`. This biaxial extension is labeled as an app assumption, not a manufacturer-published equation.
+
+Wood assembly capacities are the supplied **DF/SP** values. The tabulated download (100) is used for gravity-only combinations and (160) for wind/seismic combinations. Tabulated M(160) is used with wind/seismic; for gravity-only moment the app conservatively uses **M(160)/1.6**, because the excerpt does not tabulate M(100). This reduction is labeled as an app assumption. All concrete values are used directly; no additional load-duration increase is applied (note 1). This check uses ASD throughout; the note 6 LRFD conversion multipliers are not applied.
+
+Concrete must satisfy **f′c ≥ 2,500 psi**; stronger entered concrete does not increase catalog capacities. The download is the standard tabulated assembly value; the enhanced grouted download option in note 2 requires separate wood/concrete design and is not taken. Reinforced selection means an appropriately designed qualifying footing detail, not simply the presence of unspecified rebar. Foundation dimensions, reinforcement, anchorage, DF/SP post bending, model-matched SDS screws, centroid alignment and installation conditions remain project checks per the source footnotes.
+
+The catalog supplies no torsion capacity. Nonzero ASD **Mz** is reported as a separate required check. A ratio ≤ 1 can establish that the covered N–V–M interaction is within its limit, but cannot establish a complete base pass when torsion is present. The maximum torsion post/case is retained. Rotational stiffness is displayed for reference only; no FEA, drift or restraint benefit is taken. The source note 10 shrinkage reduction is recorded in the report conditions.
 
 ## Roof overhangs
 
@@ -167,7 +185,7 @@ This force replaces the previous manual Y reference force and enters both signed
 
 This is an engineering review tool, not automatic CBC/ASCE compliance certification. The user-specified R is recorded rather than verified against a material/system table. Code selection does not automatically supply aerodynamic tables, spectrum ordinates, period limits, system eligibility, or jurisdictional amendments.
 
-The Chapter 2 combination set is reduced to D, Lr, W, and E. Service cases are explicitly unfactored diagnostic studies; ASD applies 0.6 to ultimate wind. Snow, rain/ponding, ice, floor live load, thermal actions, equipment, and other applicable loads need separate treatment. This version implements the 100%/30% directional force-effect combinations, but does not implement accidental torsion, overstrength/anchorage combinations, capacity design, uplift-dependent support behavior, inboard roof-load eccentric transfer moments, diaphragm torsion, P–Delta, member strength, connection/anchor design, foundations, soil flexibility, or roof diaphragm design. Automatic Kz lookup, automatic gable/transverse MWFRS coefficients beyond the supplied Chapter 27 monoslope figures, automatic period estimation, and numeric multi-period spectrum retrieval are not implemented.
+The Chapter 2 combination set is reduced to D, Lr, W, and E. Service cases are explicitly unfactored diagnostic studies; ASD applies 0.6 to ultimate wind. Snow, rain/ponding, ice, floor live load, thermal actions, equipment, and other applicable loads need separate treatment. This version implements the 100%/30% directional force-effect combinations, but does not implement accidental torsion, overstrength/anchorage combinations, capacity design, uplift-dependent support behavior, inboard roof-load eccentric transfer moments, diaphragm torsion, P–Delta, member strength, general connection/anchor design beyond the MPBZ catalog interaction, foundations, soil flexibility, or roof diaphragm design. Automatic Kz lookup, automatic gable/transverse MWFRS coefficients beyond the supplied Chapter 27 monoslope figures, automatic period estimation, and numeric multi-period spectrum retrieval are not implemented.
 
 ## Validation
 

@@ -58,6 +58,10 @@ export function validate(p) {
   if(p.mpbz!==undefined){
     if(!p.mpbz||typeof p.mpbz!=='object'||Array.isArray(p.mpbz))fail('MPBZ capacity inputs must be an object.');
     for(const k of ['model','source'])if(p.mpbz[k]!==undefined&&typeof p.mpbz[k]!=='string')fail('MPBZ model and catalog source must be text.');
+    if(p.mpbz.reinforcement!==undefined&&!['unreinforced','reinforced'].includes(p.mpbz.reinforcement))fail('Choose reinforced or unreinforced MPBZ concrete.');
+    if(p.mpbz.concrete!==undefined&&!['cracked','uncracked'].includes(p.mpbz.concrete))fail('Choose cracked or uncracked MPBZ concrete.');
+    if(p.mpbz.dwellingException!==undefined&&typeof p.mpbz.dwellingException!=='boolean')fail('MPBZ dwelling exception flag must be boolean.');
+    if(p.mpbz.fc!==undefined&&p.mpbz.fc!=='')positive(p.mpbz.fc,'MPBZ concrete strength',true);
     for(const k of ['compression','uplift','vx','vy','mx','my','mz'])if(p.mpbz[k]!==undefined&&p.mpbz[k]!=='')positive(p.mpbz[k],`MPBZ allowable ${k}`,true);
   }
   const w = p.wind, s = p.seismic;
@@ -249,7 +253,7 @@ export function warnings(p){return [
   ...(p.code.includes('7-16')&&p.hazard?.source?.includes('7-22')?['The ASCE 7-22 hazard report does not match the selected ASCE 7-16 edition.']:[]),
   `Independent cantilever posts; roof gravity and roof-normal wind loads use geometric tributary areas. ${isEnvelopeLongitudinal(p)?'Transverse wind and seismic use':'Horizontal reference wind and seismic use'} ${p.distribution==='equal'?'equal load per post':'tributary area fractions'}${isEnvelopeLongitudinal(p)?'; §28.3.7 longitudinal wind uses the two outer sidewalls and their tributary lengths':''}. This is an assigned load path, not a stiffness redistribution or a universal conservative bound.`,
   ...(!isChapter27(p)&&p.wind.uniformRoof?['For each direction and sign, apply the governing net roof coefficient uniformly. This envelopes the entered local pressures but does not replace checking all required code wind patterns.']:[]),
-  'Inboard roof-load eccentric moments, diaphragm torsion, accidental torsion, P–Δ, overstrength/anchorage, and member/connection/foundation capacity are outside this hand-calculation scope.',
+  'Inboard roof-load eccentric moments, diaphragm torsion, accidental torsion, P–Δ, overstrength/anchorage, and general member/connection/foundation capacity beyond the separate MPBZ catalog interaction are outside this hand-calculation scope.',
   ...(roofPlan(p).hasOverhang?['Overhangs cantilever from adjacent outer post lines. Gravity and roof-normal wind cantilever moments are transferred to the edge posts and added to Hh; roof slope/end overhangs can produce Mz. Verify the roof-to-column moment connection and framing capacity. Inboard roof-load transfer eccentricities remain excluded. Manual wind areas/coefficients must be reviewed for the enlarged roof.']:[]),
   'Seismic design combinations include all eight signed 100%/30% orthogonal patterns. This implements directional force effects; member/foundation strength and drift acceptance checks remain outside the app.',
   'Only D, unreduced roof live Lr, W, and E are combined. Check snow, rain/ponding, ice, thermal, and other applicable loads separately.'

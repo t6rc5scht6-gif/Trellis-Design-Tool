@@ -289,13 +289,33 @@ test('Chapter 27 auto monoslope wind recalculates pressure patterns and addition
  await page.getByText('Coefficient lookup and pressure patterns',{exact:true}).click();await expect(page.locator('.chapter27-source-table tbody tr')).toHaveCount(20);
  await page.reload();await expect(page.locator('.chapter27-calcs')).toContainText('Y = 1.000 kip');expect(errors).toEqual([]);
 });
-test('MPBZ collects ASD demands and entered component ratios while overall catalog DCR stays pending',async({page})=>{
+test('MPBZ catalog model, reinforcement and linked seismic category update capacities and persist',async({page})=>{
  const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('/');await page.getByRole('button',{name:'Simpson MPBZ 07',exact:true}).click();
- await page.getByRole('tab',{name:'MPBZ capacity',exact:true}).click();await expect(page.locator('.mpbz-ratios tbody tr')).toHaveCount(7);await expect(page.locator('.mpbz-check')).toContainText('Overall MPBZ catalog DCR: pending.');
- await page.getByLabel('MPBZ model',{exact:true}).fill('Project model awaiting sheet');await page.getByText('Enter catalog ASD allowable capacities for component screening',{exact:true}).click();
- await page.getByLabel('MPBZ allowable · Shear X',{exact:true}).fill('1');
- const row=page.locator('.mpbz-ratios tbody tr').filter({has:page.getByRole('cell',{name:'Shear X',exact:true})});await expect(row.locator('td').nth(3)).toHaveText('0.544');
- await expect(page.locator('.mpbz-check')).toContainText('Overall MPBZ catalog DCR: pending.');await expect(page.locator('.mpbz-check')).toContainText('component screening checks');
- await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
- await page.reload();await page.getByRole('tab',{name:'MPBZ capacity',exact:true}).click();await expect(page.locator('.mpbz-check')).toContainText('Project model awaiting sheet');expect(errors).toEqual([]);
+ await page.getByRole('tab',{name:'MPBZ capacity',exact:true}).click();await expect(page.locator('.mpbz-check')).toContainText('Select a catalog model');
+ await page.getByLabel('MPBZ model',{exact:true}).selectOption('MPB66Z');
+ await expect(page.getByLabel('MPBZ concrete reinforcement',{exact:true})).toHaveValue('unreinforced');await expect(page.getByLabel('MPBZ concrete condition',{exact:true})).toHaveValue('cracked');
+ await expect(page.locator('.mpbz-dcr strong')).toContainText('5.5016');await expect(page.locator('.mpbz-capacities tbody tr').last()).toContainText('1.645');
+ await expect(page.locator('.mpbz-post-ratios tbody tr')).toHaveCount(9);
+ await page.getByLabel('MPBZ concrete reinforcement',{exact:true}).selectOption('reinforced');await expect(page.locator('.mpbz-capacities tbody tr').last()).toContainText('2.795');await expect(page.locator('.mpbz-dcr strong')).toContainText('3.4367');
+ await page.getByRole('button',{name:'Edit seismic design category',exact:true}).click();await page.getByLabel('Seismic design category',{exact:true}).selectOption('A');
+ await expect(page.locator('.mpbz-check')).toContainText('Automatic seismic category: A');await expect(page.locator('.mpbz-capacities tbody tr').last()).toContainText('3.190');
+ await page.getByLabel('Seismic design category',{exact:true}).selectOption('D');await expect(page.locator('.mpbz-capacities tbody tr').last()).toContainText('2.795');
+ await page.reload();await page.getByRole('button',{name:'Simpson MPBZ 07',exact:true}).click();await expect(page.getByLabel('MPBZ model',{exact:true})).toHaveValue('MPB66Z');await expect(page.getByLabel('MPBZ concrete reinforcement',{exact:true})).toHaveValue('reinforced');
+ await page.getByRole('tab',{name:'MPBZ capacity',exact:true}).click();await expect(page.locator('.mpbz-dcr strong')).toContainText('3.4367');
+ await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);expect(errors).toEqual([]);
+});
+test('MPBZ cracking, minimum concrete strength and SDC C exception are explicit and live',async({page})=>{
+ await page.goto('/');await page.getByRole('button',{name:'Simpson MPBZ 07',exact:true}).click();await page.getByLabel('MPBZ model',{exact:true}).selectOption('MPB66Z');await page.getByLabel('MPBZ concrete reinforcement',{exact:true}).selectOption('reinforced');
+ await page.getByRole('tab',{name:'MPBZ capacity',exact:true}).click();await page.getByLabel('MPBZ concrete condition',{exact:true}).selectOption('uncracked');await expect(page.locator('.mpbz-capacities tbody tr').last()).toContainText('3.350');
+ await page.getByLabel('MPBZ concrete strength · f′c',{exact:true}).fill('2499');await expect(page.locator('.mpbz-check')).toContainText('requires concrete f′c ≥ 2,500 psi');await expect(page.getByRole('button',{name:'Export report',exact:true})).toBeEnabled();
+ await page.getByLabel('MPBZ concrete strength · f′c',{exact:true}).fill('2500');await expect(page.locator('.mpbz-dcr')).toBeVisible();
+ await page.getByRole('button',{name:'Edit seismic design category',exact:true}).click();await page.getByLabel('Seismic design category',{exact:true}).selectOption('C');await page.getByRole('button',{name:'Simpson MPBZ 07',exact:true}).click();
+ await expect(page.getByLabel(/Use note 6 SDC C dwelling exception/)).not.toBeChecked();await page.getByLabel(/Use note 6 SDC C dwelling exception/).check();await expect(page.locator('.mpbz-check')).toContainText('dwelling exception in note 6 is enabled');await expect(page.locator('.mpbz-capacities tbody tr').last()).toContainText('3.730');
+});
+test('MPBZ report includes selected catalog DCR arithmetic and flags unrated overhang torsion',async({page})=>{
+ await page.goto('/');await page.getByLabel('Roof shape',{exact:true}).selectOption('mono');await page.getByLabel('Overhang · Y start',{exact:true}).fill('2');
+ await page.getByRole('button',{name:'Simpson MPBZ 07',exact:true}).click();await page.getByLabel('MPBZ model',{exact:true}).selectOption('MPB88Z');await page.getByRole('tab',{name:'MPBZ capacity',exact:true}).click();
+ await expect(page.locator('.mpbz-check')).toContainText('Torsion is outside the uploaded table');
+ const download=page.waitForEvent('download');await page.getByRole('button',{name:'Export report',exact:true}).click();const stream=await(await download).createReadStream(),chunks=[];for await(const chunk of stream)chunks.push(chunk);
+ const html=Buffer.concat(chunks).toString();expect(html).toContain('GOVERNING DCR =');expect(html).toContain('MPB88Z');expect(html).toContain('Catalog note 9');expect(html).toContain('Torsion is not rated by the supplied table');expect(html).not.toContain('catalog sheet pending');
 });
