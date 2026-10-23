@@ -24,7 +24,7 @@ export const MPBZ_CONDITIONS=[
   'Use cracked concrete unless uncracked conditions are established. Loads are not increased for load duration (note 1). The explicitly tabulated wood (100)/(160) columns are used without further increases.',
   'The displayed download is the tabulated ungrouted assembly value. Enhanced grouted download requires separate wood/concrete design and is not taken (note 2).',
   'For overlapping wood/concrete moment limits use the lesser capacity (note 8). Gravity-only wood moment uses M(160)/1.6 as a conservative app assumption; the sheet does not tabulate M(100).',
-  'Note 9 interaction is evaluated for each concurrent ASD post/case; separate demand maxima are not added. Biaxial shear and bending use sums of absolute X/Y components as a conservative app assumption; RSS resultants are also shown.',
+  'Note 9 interaction is evaluated for each concurrent ASD post/case; separate demand maxima are not added. Per project instruction, lateral demand is √(Vx² + Vy²) and moment demand is post height × that vector-resultant shear. This demand rule is a project basis, not a manufacturer-published biaxial interaction rule. Applied base bending outside shear × height requires a separate check.',
   'The excerpt provides no torsion allowable. Nonzero Mz requires a separate check and prevents an overall covered-actions pass.',
   'Catalog rotational stiffness includes connector/fastener/post effects. Note 10 calls for a 0.75 multiplier at 3% shrinkage, with linear interpolation below 3%; stiffness is displayed only and is not used for capacity or drift.',
   'Rough-sawn/larger posts require full-width notching on all four sides and centroid alignment per note 11; verify all source-sheet installation conditions.',

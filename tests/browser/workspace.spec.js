@@ -294,14 +294,15 @@ test('MPBZ catalog model, reinforcement and linked seismic category update capac
  await page.getByRole('tab',{name:'MPBZ capacity',exact:true}).click();await expect(page.locator('.mpbz-check')).toContainText('Select a catalog model');
  await page.getByLabel('MPBZ model',{exact:true}).selectOption('MPB66Z');
  await expect(page.getByLabel('MPBZ concrete reinforcement',{exact:true})).toHaveValue('unreinforced');await expect(page.getByLabel('MPBZ concrete condition',{exact:true})).toHaveValue('cracked');
- await expect(page.locator('.mpbz-dcr strong')).toContainText('5.5016');await expect(page.locator('.mpbz-capacities tbody tr').last()).toContainText('1.645');
+ await expect(page.locator('.mpbz-dcr strong')).toContainText('4.4474');await expect(page.locator('.mpbz-capacities tbody tr').last()).toContainText('1.645');
  await expect(page.locator('.mpbz-post-ratios tbody tr')).toHaveCount(9);
- await page.getByLabel('MPBZ concrete reinforcement',{exact:true}).selectOption('reinforced');await expect(page.locator('.mpbz-capacities tbody tr').last()).toContainText('2.795');await expect(page.locator('.mpbz-dcr strong')).toContainText('3.4367');
+ await expect(page.locator('.mpbz-check')).toContainText('M = Vresultant × h');await expect(page.locator('.mpbz-check')).toContainText('6.6300 kip-ft');await expect(page.locator('.mpbz-check')).toContainText('√(Vx² + Vy²)');await expect(page.locator('.mpbz-check')).not.toContainText('|Mx| + |My|');await expect(page.locator('.mpbz-check')).not.toContainText('Additional base bending requires a separate check');
+ await page.getByLabel('MPBZ concrete reinforcement',{exact:true}).selectOption('reinforced');await expect(page.locator('.mpbz-capacities tbody tr').last()).toContainText('2.795');await expect(page.locator('.mpbz-dcr strong')).toContainText('2.7891');
  await page.getByRole('button',{name:'Edit seismic design category',exact:true}).click();await page.getByLabel('Seismic design category',{exact:true}).selectOption('A');
  await expect(page.locator('.mpbz-check')).toContainText('Automatic seismic category: A');await expect(page.locator('.mpbz-capacities tbody tr').last()).toContainText('3.190');
  await page.getByLabel('Seismic design category',{exact:true}).selectOption('D');await expect(page.locator('.mpbz-capacities tbody tr').last()).toContainText('2.795');
  await page.reload();await page.getByRole('button',{name:'Simpson MPBZ 07',exact:true}).click();await expect(page.getByLabel('MPBZ model',{exact:true})).toHaveValue('MPB66Z');await expect(page.getByLabel('MPBZ concrete reinforcement',{exact:true})).toHaveValue('reinforced');
- await page.getByRole('tab',{name:'MPBZ capacity',exact:true}).click();await expect(page.locator('.mpbz-dcr strong')).toContainText('3.4367');
+ await page.getByRole('tab',{name:'MPBZ capacity',exact:true}).click();await expect(page.locator('.mpbz-dcr strong')).toContainText('2.7891');
  await page.setViewportSize({width:390,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);expect(errors).toEqual([]);
 });
 test('MPBZ cracking, minimum concrete strength and SDC C exception are explicit and live',async({page})=>{
@@ -315,7 +316,7 @@ test('MPBZ cracking, minimum concrete strength and SDC C exception are explicit 
 test('MPBZ report includes selected catalog DCR arithmetic and flags unrated overhang torsion',async({page})=>{
  await page.goto('/');await page.getByLabel('Roof shape',{exact:true}).selectOption('mono');await page.getByLabel('Overhang · Y start',{exact:true}).fill('2');
  await page.getByRole('button',{name:'Simpson MPBZ 07',exact:true}).click();await page.getByLabel('MPBZ model',{exact:true}).selectOption('MPB88Z');await page.getByRole('tab',{name:'MPBZ capacity',exact:true}).click();
- await expect(page.locator('.mpbz-check')).toContainText('Torsion is outside the uploaded table');
+ await expect(page.locator('.mpbz-check')).toContainText('Torsion is outside the uploaded table');await expect(page.locator('.mpbz-check')).toContainText('Additional base bending requires a separate check');
  const download=page.waitForEvent('download');await page.getByRole('button',{name:'Export report',exact:true}).click();const stream=await(await download).createReadStream(),chunks=[];for await(const chunk of stream)chunks.push(chunk);
- const html=Buffer.concat(chunks).toString();expect(html).toContain('GOVERNING DCR =');expect(html).toContain('MPB88Z');expect(html).toContain('Catalog note 9');expect(html).toContain('Torsion is not rated by the supplied table');expect(html).not.toContain('catalog sheet pending');
+ const html=Buffer.concat(chunks).toString();expect(html).toContain('GOVERNING DCR =');expect(html).toContain('MPB88Z');expect(html).toContain('Catalog note 9');expect(html).toContain('M = Vresultant × h');expect(html).toContain('Additional base bending requires a separate check');expect(html).not.toContain('|Mx| + |My|');expect(html).toContain('Torsion is not rated by the supplied table');expect(html).not.toContain('catalog sheet pending');
 });

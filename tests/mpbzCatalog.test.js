@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {cloneDefault,analyze} from '../src/engine.js';
 import {MPBZ_MODELS,MPBZ_CONCRETE,mpbzCapacities} from '../src/mpbzCatalog.js';
-import {mpbzCheck} from '../src/mpbz.js';
+import {mpbzCheck,mpbzDemand} from '../src/mpbz.js';
 import {reportHtml} from '../src/report.js';
 const close=(a,b)=>assert.ok(Math.abs(a-b)<1e-9*Math.max(1,Math.abs(b)),`${a} != ${b}`);
 const project=()=>{const p=cloneDefault();p.mpbz={model:'MPB66Z',reinforcement:'unreinforced',concrete:'cracked',fc:2500};p.seismic.sdc='D';return p;};
-const fake=(cases)=>({model:{posts:[{name:'P01'}]},cases});
+const fake=(cases,height=10)=>({model:{posts:[{name:'P01',pos:[0,0,height]}]},cases});
 const load=(name,kind,reactions)=>({name,family:'ASD',factors:kind==='wind'?{D:1,'WX+':.6}:kind==='seismic'?{D:1.1,'EX+':.7}: {D:1},reactions:[reactions]});
 test('all concrete table rows match the supplied sheet in original lb / ft-lb units',()=>{
  const expected=[
@@ -49,23 +49,46 @@ test('SDC C dwelling exception is explicit and never applies to D, E or F',()=>{
  const p=project();p.seismic.sdc='C';assert.equal(mpbzCapacities(p,'seismic').group,'CF');p.mpbz.dwellingException=true;assert.equal(mpbzCapacities(p,'seismic').group,'AB');assert.equal(mpbzCapacities(p,'seismic').exception,true);
  for(const sdc of ['D','E','F']){p.seismic.sdc=sdc;assert.equal(mpbzCapacities(p,'seismic').group,'CF');assert.equal(mpbzCapacities(p,'seismic').exception,false);}
 });
-test('note 9 hand arithmetic uses concurrent ASD axial OR uplift plus both orthogonal actions',()=>{
- const p=project(),r=fake([load('W','wind',[200,-300,-1000,400,-600,0])]),c=mpbzCheck(p,r);
- close(c.ratio,1000/10855+1000/1875+500/2405);assert.equal(c.governing.axialBranch,'Download');assert.equal(c.passed,true);
- close(c.governing.demand.shearResultant,Math.hypot(200,300));close(c.governing.demand.lateral,500);
- r.cases[0].reactions[0][2]=1000;const uplift=mpbzCheck(p,r);close(uplift.ratio,1000/5815+1000/1875+500/2405);assert.equal(uplift.governing.axialBranch,'Uplift');
- r.cases[0].factors={D:1,'EX+':.7};close(mpbzCheck(p,r).ratio,1000/5815+1000/1645+500/2110);
+test('note 9 uses concurrent ASD axial OR uplift plus resultant shear and shear times height',()=>{
+ const p=project(),r=fake([load('W','wind',[30,40,-1000,-400,300,0])]),c=mpbzCheck(p,r);
+ close(c.ratio,1000/10855+500/1875+50/2405);assert.equal(c.governing.axialBranch,'Download');assert.equal(c.passed,true);
+ close(c.governing.demand.lateral,50);close(c.governing.demand.moment,500);
+ r.cases[0].reactions[0][2]=1000;const uplift=mpbzCheck(p,r);close(uplift.ratio,1000/5815+500/1875+50/2405);assert.equal(uplift.governing.axialBranch,'Uplift');
+ r.cases[0].factors={D:1,'EX+':.7};close(mpbzCheck(p,r).ratio,1000/5815+500/1645+50/2110);
+});
+test('100/30 moment demand is the exact resultant of already factored shear times post height',()=>{
+ const h=11.75,v=123.456789,row=[v,.3*v,0,-.3*v*h,v*h,0];
+ const c=mpbzCheck(project(),fake([load('100/30','seismic',row)],h)),d=c.governing.demand;
+ close(d.lateral,v*Math.sqrt(1.09));close(d.moment,v*Math.sqrt(1.09)*h);
+ close(c.governing.lateralRatio,d.lateral/2110);close(c.governing.momentRatio,d.lateral*h/1645);
+ assert.notEqual(d.moment,1.3*v*h);assert.equal(c.additionalMomentPending,false);
+});
+test('each post uses its own actual height, rather than the project eave height',()=>{
+ const p=project();p.height=2;const r=fake([load('different heights','wind',[30,40,0,-400,300,0])]);
+ r.model.posts.push({name:'P02',pos:[5,0,15]});r.cases[0].reactions.push([30,40,0,-600,450,0]);
+ const c=mpbzCheck(p,r);close(c.records[0].demand.moment,500);close(c.records[1].demand.moment,750);assert.equal(c.governing.post,'P02');assert.equal(c.additionalMomentPending,false);
+});
+test('extra base moments stay separate from requested Vh demand and prevent a complete pass',()=>{
+ const p=project(),row=[30,40,0,-450,380,0],r=fake([load('overhang','wind',row)]),c=mpbzCheck(p,r);
+ close(c.governing.demand.moment,500);close(c.governing.demand.additionalMoment,Math.hypot(-50,80));close(c.governing.demand.momentResultant,Math.hypot(-450,380));
+ assert.equal(c.status,'additional-moment-check-required');assert.equal(c.passed,null);assert.deepEqual(r.cases[0].reactions[0],row);
+ const gravity=mpbzCheck(p,fake([load('gravity overhang','gravity',[0,0,-1000,200,300,0])]));
+ close(gravity.governing.demand.moment,0);assert.ok(gravity.additionalMomentPending);assert.equal(gravity.passed,null);
+ const otherLever=mpbzCheck(p,fake([load('elevated horizontal load','wind',[0,40,0,-600,0,0])]));close(otherLever.governing.demand.moment,400);close(otherLever.additionalMoment.demand.additionalMoment,200);
+});
+test('demand requires a positive finite actual post height',()=>{
+ for(const h of [0,-1,NaN,Infinity,undefined])assert.throws(()=>mpbzDemand([0,0,0,0,0,0],h),/actual post height/);
 });
 test('governing interaction is checked per concurrent case rather than adding separate extrema',()=>{
  const p=project();p.mpbz.reinforcement='reinforced';
- const r=fake([load('M dominates','wind',[100,0,0,1000,0,0]),load('V dominates','wind',[1000,0,-500,0,0,0]),{family:'LRFD',name:'Ignore LRFD',factors:{'EX+':1},reactions:[[1e9,0,0,1e9,0,0]]}]);
- const c=mpbzCheck(p,r);assert.equal(c.governing.case,'V dominates');close(c.ratio,500/10855+1000/2405);assert.ok(c.ratio<1000/3190+500/10855+1000/2405);
+ const r=fake([load('axial dominates','wind',[0,0,-5000,0,0,0]),load('lateral dominates','wind',[150,0,0,0,1500,0]),{family:'LRFD',name:'Ignore LRFD',factors:{'EX+':1},reactions:[[1e9,0,0,1e9,0,0]]}]);
+ const c=mpbzCheck(p,r);assert.equal(c.governing.case,'lateral dominates');close(c.ratio,1500/3190+150/2405);assert.ok(c.ratio<5000/10855+1500/3190+150/2405);
  assert.equal(c.records.length,2);assert.deepEqual(c.governing.reactions,r.cases[1].reactions[0]);
 });
 test('limit acceptance, tied cases and unrated torsion are handled without a false complete pass',()=>{
- const p=project(),c1=load('exact','wind',[2405,0,0,0,0,0]),r=fake([c1,load('tie','wind',[-2405,0,0,0,0,0])]);let c=mpbzCheck(p,r);close(c.ratio,1);assert.equal(c.passed,true);assert.equal(c.ties.length,2);
- c1.reactions[0][0]=2405.01;c=mpbzCheck(p,r);assert.equal(c.status,'exceeds');assert.equal(c.passed,false);
- const t=mpbzCheck(p,fake([load('torsion','wind',[100,0,0,0,0,100])]));assert.equal(t.status,'torsion-check-required');assert.equal(t.passed,null);assert.ok(t.torsionPending);
+ const p=project(),v=1/(10/1875+1/2405),c1=load('exact','wind',[v,0,0,0,v*10,0]),r=fake([c1,load('tie','wind',[-v,0,0,0,-v*10,0])]);let c=mpbzCheck(p,r);close(c.ratio,1);assert.equal(c.passed,true);assert.equal(c.ties.length,2);
+ c1.reactions[0][0]=v+.01;c1.reactions[0][4]=(v+.01)*10;c=mpbzCheck(p,r);assert.equal(c.status,'exceeds');assert.equal(c.passed,false);
+ const t=mpbzCheck(p,fake([load('torsion','wind',[100,0,0,0,1000,100])]));assert.equal(t.status,'torsion-check-required');assert.equal(t.passed,null);assert.ok(t.torsionPending);
 });
 test('catalog eligibility does not extrapolate concrete strength, unknown categories or unsupported models',()=>{
  const p=project();p.mpbz.fc=2499;assert.match(mpbzCapacities(p,'wind').issue,/2,500/);p.mpbz.fc=5000;close(mpbzCapacities(p,'wind').lateral,2405);
@@ -73,6 +96,6 @@ test('catalog eligibility does not extrapolate concrete strength, unknown catego
 });
 test('actual canopy reactions, reports and all selected capacity profiles remain traceable',()=>{
  const p=project(),r=analyze(p),c=mpbzCheck(p,r);assert.equal(c.records.length,42*9);assert.equal(c.postResults.length,9);
- for(const a of c.records)assert.ok(a.ratio<=c.ratio+1e-9);assert.ok(c.ratio>1);
- const html=reportHtml(p,r);for(const text of ['GOVERNING DCR =','Catalog note 9','SDC D','MPB66Z','1.645','1.875','1.044 Vx','M(160)/1.6'])assert.ok(html.includes(text),text);
+ for(const a of c.records){assert.ok(a.ratio<=c.ratio+1e-9);close(a.demand.moment,a.demand.lateral*r.model.posts[a.postIndex].pos[2]);close(a.demand.moment,a.demand.momentResultant);}assert.ok(c.ratio>1);assert.equal(c.additionalMomentPending,false);
+ const html=reportHtml(p,r);for(const text of ['GOVERNING DCR =','Catalog note 9','SDC D','MPB66Z','1.645','1.875','1.044 Vx','M = Vresultant × h','M(160)/1.6'])assert.ok(html.includes(text),text);
 });
